@@ -6,11 +6,9 @@ ambigui2 is a terminal-first Zig project focused on high-performance gameplay si
 
 ## Project Status
 
-Current repository state: scaffolding and module layout are in place.
-
-- Source modules are present under `src/`, but implementation files are currently stubs.
-- The architecture and milestones are defined; engine and AI logic are the next implementation focus.
-
+Current repository state: Ongoing Engine Development
+- Implemented Board and Pieces logic.
+- Next to implement is physics and RNG.
 This README documents the intended production architecture and development workflow.
 
 ## Core Concepts
