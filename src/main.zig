@@ -3,7 +3,6 @@ const posix = std.posix; // Handles raw terminal interaction in WSL/Linux
 const game_mod = @import("engine/game.zig");
 const GameState = game_mod.GameState;
 const Board = @import("engine/board.zig").Board;
-const physics = @import("engine/physics.zig");
 const piece_mod = @import("engine/piece.zig");
 const Piece = piece_mod.Piece;
 
@@ -32,30 +31,18 @@ fn disableRawMode(orig_termios: posix.termios) void {
 
 // --- RENDERING ---
 /// Combines the static locked board with the dynamic falling piece to render a single frame.
-fn render(state: *const GameState) void {
-    // 1. Clear the terminal and move cursor to top-left using ANSI escape codes
-    std.debug.print("\x1b[2J\x1b[H", .{});
-
-    std.debug.print("=== AMBIGUI2 ENGINE ===\n", .{});
-    std.debug.print("Score: {d} | Lines: {d}\n", .{ state.score, state.lines_cleared });
-    std.debug.print("Quantum Prob: {d}%\n\n", .{@as(u32, @intFromFloat(state.current_piece.prob_a * 100))});
-
-    // 2. Clone the static board memory so we can draw the falling piece onto it temporarily
-    var render_grid = state.board.grid;
-
-    // 3. Project the combined superposition shadow onto our temporary render grid
-    const shadow_mask = state.current_piece.getSuperpositionMask();
+fn overlayPiece(render_grid: *[Board.HEIGHT]u16, piece: *const Piece) void {
     var row: usize = 0;
     while (row < Piece.BOUND_SIZE) : (row += 1) {
         const shift_amount: u4 = @intCast((Piece.BOUND_SIZE - 1 - row) * 4);
-        const piece_row: u16 = (shadow_mask >> shift_amount) & 0x0F;
+        const piece_row: u16 = (piece.matrix >> shift_amount) & 0x0F;
         if (piece_row == 0) continue;
 
-        const board_y: i16 = @as(i16, state.current_piece.state_a.y) + @as(i16, @intCast(row));
+        const board_y: i16 = @as(i16, piece.y) + @as(i16, @intCast(row));
         if (board_y < 0 or board_y >= @as(i16, @intCast(Board.HEIGHT))) continue;
 
         var projected_row: u16 = 0;
-        const x_i16: i16 = @as(i16, state.current_piece.state_a.x);
+        const x_i16: i16 = @as(i16, piece.x);
         if (x_i16 < 0) {
             const shift_right_i16: i16 = -x_i16;
             std.debug.assert(shift_right_i16 <= 15);
@@ -65,9 +52,28 @@ fn render(state: *const GameState) void {
             projected_row = piece_row << @as(u4, @intCast(x_i16));
         }
 
-        // Bitwise OR drops the falling piece onto the render grid for this frame only
         render_grid[@as(usize, @intCast(board_y))] |= projected_row;
     }
+}
+
+fn render(state: *const GameState) void {
+    // 1. Clear the terminal and move cursor to top-left using ANSI escape codes
+    std.debug.print("\x1b[2J\x1b[H", .{});
+
+    std.debug.print("=== AMBIGUI2 ENGINE ===\n", .{});
+    std.debug.print("Score: {d} | Lines: {d}\n", .{ state.score, state.lines_cleared });
+    std.debug.print("Quantum Prob: {d}%\n\n", .{@as(u32, @intFromFloat(state.current_piece.prob_a * 100))});
+    std.debug.print("State A Impacted: {s} | State B Impacted: {s}\n\n", .{
+        if (state.state_a_impacted) "yes" else "no",
+        if (state.state_b_impacted) "yes" else "no",
+    });
+
+    // 2. Clone the static board memory so we can draw the falling piece onto it temporarily
+    var render_grid = state.board.grid;
+
+    // 3. Overlay both deterministic states at their independent positions.
+    overlayPiece(&render_grid, &state.current_piece.state_a);
+    overlayPiece(&render_grid, &state.current_piece.state_b);
 
     // 4. Print the final composited grid
     for (render_grid) |raw_row| {
@@ -85,7 +91,20 @@ fn render(state: *const GameState) void {
         std.debug.print("|\n", .{});
     }
     std.debug.print("=======================\n", .{});
-    std.debug.print("Controls: [a/A] Left | [d/D] Right | [s/S] Soft Drop | [q/Q] Quit\n", .{});
+    std.debug.print("Controls: [<-] Left | [->] Right | [Space] Hard Drop | [s/S] Soft Drop | [q/Q] Quit\n", .{});
+}
+
+fn handleGameplayKey(state: *GameState, key: u8) bool {
+    if (key == 'q' or key == 'Q') return true;
+    if (key == 's' or key == 'S') {
+        _ = state.tickGravity();
+        return false;
+    }
+    if (key == ' ') {
+        state.hardDrop();
+        return false;
+    }
+    return false;
 }
 
 fn readInputByte(buf: *[1]u8) !usize {
@@ -111,6 +130,7 @@ pub fn main() !void {
 
     // Standard non-blocking buffer
     var buffer: [1]u8 = undefined;
+    var esc_state: u2 = 0;
 
     while (!state.game_over) {
         // 1. INPUT PROCESSING
@@ -118,21 +138,23 @@ pub fn main() !void {
         const bytes_read = try readInputByte(&buffer);
         if (bytes_read > 0) {
             const key = buffer[0];
-            var dx: i8 = 0;
-            var dy: i8 = 0;
 
-            if (key == 'q' or key == 'Q') break; // Emergency exit
-            if (key == 'a' or key == 'A') dx = -1;
-            if (key == 'd' or key == 'D') dx = 1;
-            if (key == 's' or key == 'S') dy = 1;
-
-            if (dx != 0 or dy != 0) {
-                // Apply movement vector
-                state.current_piece.moveBy(dx, dy);
-
-                // If the player's move caused a collision, undo it immediately
-                if (physics.checkQuantumCollision(&state.board, &state.current_piece)) {
-                    state.current_piece.moveBy(-dx, -dy);
+            if (esc_state == 0) {
+                if (key == 0x1b) {
+                    esc_state = 1;
+                } else {
+                    if (handleGameplayKey(&state, key)) break;
+                }
+            } else if (esc_state == 1) {
+                esc_state = if (key == '[') 2 else 0;
+            } else {
+                esc_state = 0;
+                if (key == 'D') {
+                    state.tryMoveHorizontal(-1);
+                } else if (key == 'C') {
+                    state.tryMoveHorizontal(1);
+                } else if (key == 'B') {
+                    _ = state.tickGravity();
                 }
             }
         }
@@ -141,16 +163,7 @@ pub fn main() !void {
         const current_time = std.time.milliTimestamp();
         if (current_time - last_gravity_tick > gravity_interval_ms) {
             last_gravity_tick = current_time;
-
-            // Apply downward vector
-            state.current_piece.moveBy(0, 1);
-
-            // If gravity pushed us into the floor/blocks, trigger the collapse
-            if (physics.checkQuantumCollision(&state.board, &state.current_piece)) {
-                // Undo the gravity tick to stay above the floor
-                state.current_piece.moveBy(0, -1);
-                state.collapseAndLock();
-            }
+            _ = state.tickGravity();
         }
 
         // 3. RENDER FRAME
