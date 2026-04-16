@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const Board = @import("board.zig").Board;
 const piece_mod = @import("piece.zig");
 const Piece = piece_mod.Piece;
@@ -80,38 +79,13 @@ pub fn checkCollision(board: *const Board, piece: *const Piece) bool {
     return false;
 }
 
-/// Checks collision for a Dual-State piece in O(1) time complexity.
-/// The core mechanic requires the entire superposition to stop if EITHER state collides.
+/// Checks collision for a Dual-State piece.
+/// Returns true if either deterministic branch collides.
 pub inline fn checkQuantumCollision(board: *const Board, q_piece: *const QuantumPiece) bool {
     // Fail-fast mathematical invariants
     std.debug.assert(std.math.isFinite(q_piece.prob_a));
     std.debug.assert(q_piece.prob_a >= 0.0 and q_piece.prob_a <= 1.0);
-    // Guarantee that both states act as a single, rigid physical object
-    std.debug.assert(q_piece.state_a.x == q_piece.state_b.x);
-    std.debug.assert(q_piece.state_a.y == q_piece.state_b.y);
 
-    // PERFORMANCE OPTIMIZATION: "The Shadow Piece"
-    // Instead of evaluating state A and state B separately (O(N) * 2), we combine
-    // their masks into a single 16-bit integer using bitwise OR.
-    // This allows the engine to evaluate both states simultaneously in a single pass.
-    const shadow_piece = Piece{
-        .shape_type = q_piece.state_a.shape_type, // Ignored by the physics engine
-        .matrix = q_piece.getSuperpositionMask(), // The combined probability cloud
-        .x = q_piece.state_a.x,
-        .y = q_piece.state_a.y,
-    };
-
-    const shadow_collision = checkCollision(board, &shadow_piece);
-
-    // DEVELOPMENT ONLY: Compile-time logic gating.
-    // In Debug mode, we calculate the slower O(N) double-check and assert it perfectly
-    // matches our highly optimized shadow logic. When compiled in ReleaseFast for AI training,
-    // this entire block of code is deleted by the compiler, resulting in 0 CPU cycle overhead.
-    if (builtin.mode == .Debug) {
-        const either_collision = checkCollision(board, &q_piece.state_a) or
-            checkCollision(board, &q_piece.state_b);
-        std.debug.assert(shadow_collision == either_collision);
-    }
-
-    return shadow_collision;
+    return checkCollision(board, &q_piece.state_a) or
+        checkCollision(board, &q_piece.state_b);
 }
