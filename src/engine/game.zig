@@ -23,6 +23,8 @@ pub const GameState = struct {
     lines_cleared: u32,
     game_over: bool,
     top_out_reason: ?TopOutReason,
+    state_a_impacted: bool,
+    state_b_impacted: bool,
 
     /// Initializes the engine. A fixed seed guarantees deterministic chance nodes
     /// for the Expectimax search tree and reproducible debugging.
@@ -35,9 +37,23 @@ pub const GameState = struct {
             .lines_cleared = 0,
             .game_over = false,
             .top_out_reason = null,
+            .state_a_impacted = false,
+            .state_b_impacted = false,
         };
         state.spawnNextPiece();
         return state;
+    }
+
+    fn canMovePieceBy(self: *const GameState, piece: *const Piece, dx: i8, dy: i8) bool {
+        var probe = piece.*;
+        probe.x += dx;
+        probe.y += dy;
+        return !physics.checkCollision(&self.board, &probe);
+    }
+
+    fn refreshImpactFlags(self: *GameState) void {
+        self.state_a_impacted = !self.canMovePieceBy(&self.current_piece.state_a, 0, 1);
+        self.state_b_impacted = !self.canMovePieceBy(&self.current_piece.state_b, 0, 1);
     }
 
     /// Generates the next quantum superposition and checks for spawn obstruction.
@@ -57,11 +73,71 @@ pub const GameState = struct {
 
         const prob = 0.1 + (random.float(f32) * 0.8);
         self.current_piece = QuantumPiece.init(shape_a, shape_b, prob);
+        self.state_a_impacted = false;
+        self.state_b_impacted = false;
 
         // Trigger 1 (Block Out): Ensure the spawn zone is mathematically clear.
         if (physics.checkQuantumCollision(&self.board, &self.current_piece)) {
             self.game_over = true;
             self.top_out_reason = .block_out;
+            return;
+        }
+
+        self.refreshImpactFlags();
+    }
+
+    /// Attempts a horizontal move for both states together.
+    /// If either branch collides, the move is reverted.
+    pub fn tryMoveHorizontal(self: *GameState, dx: i8) void {
+        if (self.game_over) return;
+
+        self.current_piece.state_a.x += dx;
+        self.current_piece.state_b.x += dx;
+
+        if (physics.checkCollision(&self.board, &self.current_piece.state_a) or
+            physics.checkCollision(&self.board, &self.current_piece.state_b))
+        {
+            self.current_piece.state_a.x -= dx;
+            self.current_piece.state_b.x -= dx;
+            return;
+        }
+
+        self.refreshImpactFlags();
+    }
+
+    /// Applies one gravity tick with independent fall states.
+    /// Returns true if this tick caused a collapse/lock transition.
+    pub fn tickGravity(self: *GameState) bool {
+        if (self.game_over) return false;
+
+        if (!self.state_a_impacted) {
+            self.current_piece.state_a.y += 1;
+            if (physics.checkCollision(&self.board, &self.current_piece.state_a)) {
+                self.current_piece.state_a.y -= 1;
+                self.state_a_impacted = true;
+            }
+        }
+
+        if (!self.state_b_impacted) {
+            self.current_piece.state_b.y += 1;
+            if (physics.checkCollision(&self.board, &self.current_piece.state_b)) {
+                self.current_piece.state_b.y -= 1;
+                self.state_b_impacted = true;
+            }
+        }
+
+        if (self.state_a_impacted and self.state_b_impacted) {
+            self.collapseAndLock();
+            return true;
+        }
+
+        return false;
+    }
+
+    /// Drops the current quantum piece until collapse triggers.
+    pub fn hardDrop(self: *GameState) void {
+        while (!self.game_over) {
+            if (self.tickGravity()) break;
         }
     }
 
@@ -69,6 +145,7 @@ pub const GameState = struct {
     /// projects the result into the bitboard, and evaluates board clears.
     pub fn collapseAndLock(self: *GameState) void {
         if (self.game_over) return;
+        std.debug.assert(self.state_a_impacted and self.state_b_impacted);
 
         const random = self.rng.random();
         const roll = random.float(f32);
