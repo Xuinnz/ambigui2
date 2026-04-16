@@ -1,82 +1,169 @@
 const std = @import("std");
+const posix = std.posix; // Handles raw terminal interaction in WSL/Linux
+const game_mod = @import("engine/game.zig");
+const GameState = game_mod.GameState;
 const Board = @import("engine/board.zig").Board;
+const physics = @import("engine/physics.zig");
 const piece_mod = @import("engine/piece.zig");
-const ShapeType = piece_mod.ShapeType;
-const QuantumPiece = piece_mod.QuantumPiece;
+const Piece = piece_mod.Piece;
 
-fn setOccupied(board: *Board, row_idx: usize, col_idx: usize, value: bool) void {
-    std.debug.assert(row_idx < Board.HEIGHT);
-    std.debug.assert(col_idx < Board.WIDTH);
+// --- TERMINAL MAGIC ---
+// This switches the Linux/WSL terminal out of "line mode" and into "raw mode"
+// so we can read keyboard inputs instantly without waiting for the Enter key.
+fn enableRawMode(orig_termios: *posix.termios) !void {
+    const stdin_fd = posix.STDIN_FILENO;
+    orig_termios.* = try posix.tcgetattr(stdin_fd);
 
-    const shift: u4 = @intCast(col_idx);
-    const bit: u16 = @as(u16, 1) << shift;
+    var raw = orig_termios.*;
+    // Disable echo (don't print keys to screen) and canonical mode (read instantly)
+    raw.lflag.ECHO = false;
+    raw.lflag.ICANON = false;
 
-    if (value) {
-        board.grid[row_idx] |= bit;
-    } else {
-        board.grid[row_idx] &= ~bit;
-    }
+    // Set non-blocking read: VMIN = 0 bytes required, VTIME = 0 timeout
+    raw.cc[@intFromEnum(posix.V.MIN)] = 0;
+    raw.cc[@intFromEnum(posix.V.TIME)] = 0;
+
+    try posix.tcsetattr(stdin_fd, .FLUSH, raw);
 }
 
+fn disableRawMode(orig_termios: posix.termios) void {
+    posix.tcsetattr(posix.STDIN_FILENO, .FLUSH, orig_termios) catch {};
+}
+
+// --- RENDERING ---
+/// Combines the static locked board with the dynamic falling piece to render a single frame.
+fn render(state: *const GameState) void {
+    // 1. Clear the terminal and move cursor to top-left using ANSI escape codes
+    std.debug.print("\x1b[2J\x1b[H", .{});
+
+    std.debug.print("=== AMBIGUI2 ENGINE ===\n", .{});
+    std.debug.print("Score: {d} | Lines: {d}\n", .{ state.score, state.lines_cleared });
+    std.debug.print("Quantum Prob: {d}%\n\n", .{@as(u32, @intFromFloat(state.current_piece.prob_a * 100))});
+
+    // 2. Clone the static board memory so we can draw the falling piece onto it temporarily
+    var render_grid = state.board.grid;
+
+    // 3. Project the combined superposition shadow onto our temporary render grid
+    const shadow_mask = state.current_piece.getSuperpositionMask();
+    var row: usize = 0;
+    while (row < Piece.BOUND_SIZE) : (row += 1) {
+        const shift_amount: u4 = @intCast((Piece.BOUND_SIZE - 1 - row) * 4);
+        const piece_row: u16 = (shadow_mask >> shift_amount) & 0x0F;
+        if (piece_row == 0) continue;
+
+        const board_y: i16 = @as(i16, state.current_piece.state_a.y) + @as(i16, @intCast(row));
+        if (board_y < 0 or board_y >= @as(i16, @intCast(Board.HEIGHT))) continue;
+
+        var projected_row: u16 = 0;
+        const x_i16: i16 = @as(i16, state.current_piece.state_a.x);
+        if (x_i16 < 0) {
+            const shift_right_i16: i16 = -x_i16;
+            std.debug.assert(shift_right_i16 <= 15);
+            projected_row = piece_row >> @as(u4, @intCast(shift_right_i16));
+        } else {
+            std.debug.assert(x_i16 <= 15);
+            projected_row = piece_row << @as(u4, @intCast(x_i16));
+        }
+
+        // Bitwise OR drops the falling piece onto the render grid for this frame only
+        render_grid[@as(usize, @intCast(board_y))] |= projected_row;
+    }
+
+    // 4. Print the final composited grid
+    for (render_grid) |raw_row| {
+        const clean_row = raw_row & Board.ROW_MASK;
+        std.debug.print("|", .{});
+        var col: usize = 0;
+        while (col < Board.WIDTH) : (col += 1) {
+            const is_block = (clean_row & (@as(u16, 1) << @as(u4, @intCast(col)))) != 0;
+            if (is_block) {
+                std.debug.print("[]", .{});
+            } else {
+                std.debug.print(" .", .{});
+            }
+        }
+        std.debug.print("|\n", .{});
+    }
+    std.debug.print("=======================\n", .{});
+    std.debug.print("Controls: [a/A] Left | [d/D] Right | [s/S] Soft Drop | [q/Q] Quit\n", .{});
+}
+
+fn readInputByte(buf: *[1]u8) !usize {
+    const result = posix.read(posix.STDIN_FILENO, buf) catch |err| switch (err) {
+        error.WouldBlock => return 0,
+        else => return err,
+    };
+    return result;
+}
+
+// --- MAIN LOOP ---
 pub fn main() !void {
-    std.debug.print("=== AMBIGUI2 ENGINE TEST BENCH ===\n\n", .{});
+    // Terminal setup
+    var orig_termios: posix.termios = undefined;
+    try enableRawMode(&orig_termios);
+    defer disableRawMode(orig_termios); // Ensure terminal resets even if game crashes
 
-    // ---------------------------------------------------------
-    // TEST 1: Board Memory and Bitwise Line Clearing
-    // ---------------------------------------------------------
-    std.debug.print("[1] Testing Board Memory and Line Clearing...\n", .{});
-    var board = Board.init();
+    // Initialize deterministic game state
+    var state = GameState.init(42);
 
-    // Inject a full bottom line.
-    board.grid[Board.HEIGHT - 1] = Board.ROW_MASK;
+    var last_gravity_tick = std.time.milliTimestamp();
+    const gravity_interval_ms: i64 = 500; // Piece falls every half second
 
-    // Inject a few blocks one row above.
-    setOccupied(&board, Board.HEIGHT - 2, 0, true);
-    setOccupied(&board, Board.HEIGHT - 2, 4, true);
-    setOccupied(&board, Board.HEIGHT - 2, 9, true);
+    // Standard non-blocking buffer
+    var buffer: [1]u8 = undefined;
 
-    std.debug.print("Initial State (solid bottom line):\n", .{});
-    board.debugPrint();
+    while (!state.game_over) {
+        // 1. INPUT PROCESSING
+        // Try to read a keystroke. If no key is pressed, it skips instantly.
+        const bytes_read = try readInputByte(&buffer);
+        if (bytes_read > 0) {
+            const key = buffer[0];
+            var dx: i8 = 0;
+            var dy: i8 = 0;
 
-    const cleared = board.clearFullLines();
-    std.debug.print("Lines cleared: {d}\n", .{cleared});
+            if (key == 'q' or key == 'Q') break; // Emergency exit
+            if (key == 'a' or key == 'A') dx = -1;
+            if (key == 'd' or key == 'D') dx = 1;
+            if (key == 's' or key == 'S') dy = 1;
 
-    std.debug.print("State After Line Clear (former row 18 should now be row 19):\n", .{});
-    board.debugPrint();
+            if (dx != 0 or dy != 0) {
+                // Apply movement vector
+                state.current_piece.moveBy(dx, dy);
 
-    // ---------------------------------------------------------
-    // TEST 2: Quantum Superposition Sync
-    // ---------------------------------------------------------
-    std.debug.print("\n[2] Testing Quantum Superposition...\n", .{});
+                // If the player's move caused a collision, undo it immediately
+                if (physics.checkQuantumCollision(&state.board, &state.current_piece)) {
+                    state.current_piece.moveBy(-dx, -dy);
+                }
+            }
+        }
 
-    var q_piece = QuantumPiece.init(ShapeType.T, ShapeType.Z, 0.70);
+        // 2. GRAVITY TICKS
+        const current_time = std.time.milliTimestamp();
+        if (current_time - last_gravity_tick > gravity_interval_ms) {
+            last_gravity_tick = current_time;
 
-    std.debug.print(
-        "Spawned T/Z Superposition at (X: {d}, Y: {d})\n",
-        .{ q_piece.state_a.x, q_piece.state_a.y },
-    );
+            // Apply downward vector
+            state.current_piece.moveBy(0, 1);
 
-    std.debug.print(
-        "Combined Superposition Mask (Binary): {b:0>16}\n",
-        .{q_piece.getSuperpositionMask()},
-    );
+            // If gravity pushed us into the floor/blocks, trigger the collapse
+            if (physics.checkQuantumCollision(&state.board, &state.current_piece)) {
+                // Undo the gravity tick to stay above the floor
+                state.current_piece.moveBy(0, -1);
+                state.collapseAndLock();
+            }
+        }
 
-    std.debug.print("\nSimulating Vector Movement: moveBy(-1, 2)...\n", .{});
-    q_piece.moveBy(-1, 2);
+        // 3. RENDER FRAME
+        render(&state);
 
-    std.debug.print("New Position Sync Check:\n", .{});
-    std.debug.print(
-        "  -> State A (T): X: {d}, Y: {d}\n",
-        .{ q_piece.state_a.x, q_piece.state_a.y },
-    );
-    std.debug.print(
-        "  -> State B (Z): X: {d}, Y: {d}\n",
-        .{ q_piece.state_b.x, q_piece.state_b.y },
-    );
+        // Sleep for 16ms (~60 FPS) to prevent the CPU loop from maxing out at 100%
+        std.Thread.sleep(16 * std.time.ns_per_ms);
+    }
 
-    std.debug.assert(q_piece.state_a.x == q_piece.state_b.x);
-    std.debug.assert(q_piece.state_a.y == q_piece.state_b.y);
-    std.debug.print("  -> Vector Sync: SUCCESS\n", .{});
-
-    std.debug.print("\n=== ALL SYSTEMS NOMINAL ===\n", .{});
+    // GAME OVER SEQUENCE
+    std.debug.print("\n=== GAME OVER ===\n", .{});
+    if (state.top_out_reason) |reason| {
+        std.debug.print("Reason: {s}\n", .{@tagName(reason)});
+    }
+    std.debug.print("Final Score: {d}\n", .{state.score});
 }
