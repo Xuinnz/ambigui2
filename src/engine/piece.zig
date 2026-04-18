@@ -29,6 +29,21 @@ pub inline fn maskForShape(shape: ShapeType) u16 {
     };
 }
 
+pub inline fn shapeIndex(shape: ShapeType) usize {
+    return @intFromEnum(shape);
+}
+
+// Precomputed shape rotations (spawn, CW1, CW2, CW3).
+pub const ROTATION_MASKS: [7][4]u16 = .{
+    .{ 0x0F00, 0x4444, 0x00F0, 0x2222 }, // I
+    .{ 0x0660, 0x0660, 0x0660, 0x0660 }, // O
+    .{ 0x04E0, 0x0262, 0x0720, 0x4640 }, // T
+    .{ 0x06C0, 0x0462, 0x0360, 0x4620 }, // S
+    .{ 0x0C60, 0x0264, 0x0630, 0x2640 }, // Z
+    .{ 0x08E0, 0x0226, 0x0710, 0x6440 }, // J
+    .{ 0x02E0, 0x0622, 0x0740, 0x4460 }, // L
+};
+
 //represents one block
 pub const Piece = struct {
     pub const BOUND_SIZE: usize = 4; //dimension of the block is only 4x4
@@ -36,6 +51,7 @@ pub const Piece = struct {
 
     shape_type: ShapeType,
     matrix: u16,
+    rotation_idx: u2,
     x: i8,
     y: i8,
 
@@ -46,13 +62,22 @@ pub const Piece = struct {
 
         //get center spawn
         const spawn_x: i8 = @intCast((Board.WIDTH - BOUND_SIZE) / 2);
+        const idx = shapeIndex(shape);
 
         return .{
             .shape_type = shape,
-            .matrix = maskForShape(shape),
+            .matrix = ROTATION_MASKS[idx][0],
+            .rotation_idx = 0,
             .x = spawn_x,
             .y = DEFAULT_SPAWN_Y,
         };
+    }
+
+    pub fn rotateCW(self: *Piece) void {
+        const idx = shapeIndex(self.shape_type);
+        const next_idx: u2 = @intCast((@as(u3, self.rotation_idx) + 1) & 0b11);
+        self.rotation_idx = next_idx;
+        self.matrix = ROTATION_MASKS[idx][next_idx];
     }
 };
 
