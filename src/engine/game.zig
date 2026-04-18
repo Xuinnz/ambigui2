@@ -6,6 +6,9 @@ const ShapeType = piece_mod.ShapeType;
 const Piece = piece_mod.Piece;
 const QuantumPiece = piece_mod.QuantumPiece;
 
+const BAG_SIZE: usize = @typeInfo(ShapeType).@"enum".fields.len;
+const ALL_SHAPES: [BAG_SIZE]ShapeType = .{ .I, .O, .T, .S, .Z, .J, .L };
+
 /// Defines the terminal conditions for a game session.
 pub const TopOutReason = enum {
     /// A piece spawned overlapping an existing locked block.
@@ -19,6 +22,8 @@ pub const GameState = struct {
     board: Board,
     current_piece: QuantumPiece,
     rng: std.Random.Xoshiro256,
+    shape_bag: [BAG_SIZE]ShapeType,
+    bag_index: usize,
     score: u32,
     lines_cleared: u32,
     game_over: bool,
@@ -33,6 +38,8 @@ pub const GameState = struct {
             .board = Board.init(),
             .current_piece = undefined,
             .rng = std.Random.Xoshiro256.init(seed),
+            .shape_bag = undefined,
+            .bag_index = BAG_SIZE,
             .score = 0,
             .lines_cleared = 0,
             .game_over = false,
@@ -40,8 +47,50 @@ pub const GameState = struct {
             .state_a_impacted = false,
             .state_b_impacted = false,
         };
+
+        state.refillBag();
         state.spawnNextPiece();
         return state;
+    }
+
+    fn refillBag(self: *GameState) void {
+        self.shape_bag = ALL_SHAPES;
+
+        const random = self.rng.random();
+        var i: usize = BAG_SIZE - 1;
+        while (i > 0) : (i -= 1) {
+            const j = random.intRangeLessThan(usize, 0, i + 1);
+            std.mem.swap(ShapeType, &self.shape_bag[i], &self.shape_bag[j]);
+        }
+
+        self.bag_index = 0;
+    }
+
+    fn drawFromBag(self: *GameState) ShapeType {
+        if (self.bag_index >= BAG_SIZE) {
+            self.refillBag();
+        }
+
+        const shape = self.shape_bag[self.bag_index];
+        self.bag_index += 1;
+        return shape;
+    }
+
+    fn resolveSecondDuplicate(self: *GameState, exclude: ShapeType) ShapeType {
+        std.debug.assert(self.bag_index > 0);
+        const consumed_idx = self.bag_index - 1;
+
+        var i: usize = self.bag_index;
+        while (i < BAG_SIZE) : (i += 1) {
+            if (self.shape_bag[i] == exclude) continue;
+
+            const chosen = self.shape_bag[i];
+            self.shape_bag[i] = self.shape_bag[consumed_idx];
+            self.shape_bag[consumed_idx] = chosen;
+            return chosen;
+        }
+
+        unreachable;
     }
 
     fn canMovePieceBy(self: *const GameState, piece: *const Piece, dx: i8, dy: i8) bool {
@@ -60,17 +109,17 @@ pub const GameState = struct {
     pub fn spawnNextPiece(self: *GameState) void {
         if (self.game_over) return;
 
-        const random = self.rng.random();
-        const shape_count: u8 = @intCast(@typeInfo(ShapeType).@"enum".fields.len);
-
-        const shape_a = @as(ShapeType, @enumFromInt(random.intRangeLessThan(u8, 0, shape_count)));
-        var shape_b = @as(ShapeType, @enumFromInt(random.intRangeLessThan(u8, 0, shape_count)));
+        const shape_a = self.drawFromBag();
+        var shape_b = self.drawFromBag();
 
         // Invariant: A quantum piece must comprise two distinct deterministic states.
-        while (shape_a == shape_b) {
-            shape_b = @as(ShapeType, @enumFromInt(random.intRangeLessThan(u8, 0, shape_count)));
+        // With a 7-bag, equality only occurs at bag boundaries, so we swap in
+        // the next distinct candidate from the same shuffled bag segment.
+        if (shape_a == shape_b) {
+            shape_b = self.resolveSecondDuplicate(shape_a);
         }
 
+        const random = self.rng.random();
         const prob = 0.1 + (random.float(f32) * 0.8);
         self.current_piece = QuantumPiece.init(shape_a, shape_b, prob);
         self.state_a_impacted = false;
@@ -99,6 +148,32 @@ pub const GameState = struct {
         {
             self.current_piece.state_a.x -= dx;
             self.current_piece.state_b.x -= dx;
+            return;
+        }
+
+        self.refreshImpactFlags();
+    }
+
+    /// Rotates both deterministic states clockwise in-place.
+    /// If either branch collides after rotation, both are reverted.
+    pub fn tryRotateCW(self: *GameState) void {
+        if (self.game_over) return;
+
+        const old_a = self.current_piece.state_a.matrix;
+        const old_b = self.current_piece.state_b.matrix;
+        const old_rot_a = self.current_piece.state_a.rotation_idx;
+        const old_rot_b = self.current_piece.state_b.rotation_idx;
+
+        self.current_piece.state_a.rotateCW();
+        self.current_piece.state_b.rotateCW();
+
+        if (physics.checkCollision(&self.board, &self.current_piece.state_a) or
+            physics.checkCollision(&self.board, &self.current_piece.state_b))
+        {
+            self.current_piece.state_a.matrix = old_a;
+            self.current_piece.state_b.matrix = old_b;
+            self.current_piece.state_a.rotation_idx = old_rot_a;
+            self.current_piece.state_b.rotation_idx = old_rot_b;
             return;
         }
 
