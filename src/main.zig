@@ -91,7 +91,7 @@ fn render(state: *const GameState) void {
         std.debug.print("|\n", .{});
     }
     std.debug.print("=======================\n", .{});
-    std.debug.print("Controls: [<-] Left | [->] Right | [Space] Hard Drop | [s/S] Soft Drop | [q/Q] Quit\n", .{});
+    std.debug.print("Controls: [<-] Left | [->] Right | [^] Rotate | [v] Faster Drop | [Space] Hard Drop | [q/Q] Quit\n", .{});
 }
 
 fn handleGameplayKey(state: *GameState, key: u8) bool {
@@ -153,7 +153,10 @@ pub fn main() !void {
                     state.tryMoveHorizontal(-1);
                 } else if (key == 'C') {
                     state.tryMoveHorizontal(1);
+                } else if (key == 'A') {
+                    state.tryRotateCW();
                 } else if (key == 'B') {
+                    // Arrow-down accelerates descent via immediate gravity tick.
                     _ = state.tickGravity();
                 }
             }
