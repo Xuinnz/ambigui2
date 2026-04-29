@@ -56,6 +56,21 @@ fn overlayPiece(render_grid: *[Board.HEIGHT]u16, piece: *const Piece) void {
     }
 }
 
+fn printMiniRow(piece: *const Piece, row: usize) void {
+    const shift_amount: u4 = @intCast((Piece.BOUND_SIZE - 1 - row) * 4);
+    const piece_row: u16 = (piece.matrix >> shift_amount) & 0x0F;
+
+    var col: usize = 0;
+    while (col < Piece.BOUND_SIZE) : (col += 1) {
+        const is_block = (piece_row & (@as(u16, 1) << @as(u4, @intCast(col)))) != 0;
+        if (is_block) {
+            std.debug.print("[]", .{});
+        } else {
+            std.debug.print(" .", .{});
+        }
+    }
+}
+
 fn render(state: *const GameState) void {
     // 1. Clear the terminal and move cursor to top-left using ANSI escape codes
     std.debug.print("\x1b[2J\x1b[H", .{});
@@ -67,6 +82,30 @@ fn render(state: *const GameState) void {
         if (state.state_a_impacted) "yes" else "no",
         if (state.state_b_impacted) "yes" else "no",
     });
+
+    std.debug.print("Possible states:\n", .{});
+
+    var preview_row: usize = 0;
+    while (preview_row < Piece.BOUND_SIZE) : (preview_row += 1) {
+        if (preview_row == 0) {
+            std.debug.print("A ", .{});
+        } else {
+            std.debug.print("  ", .{});
+        }
+        printMiniRow(&state.current_piece.state_a, preview_row);
+
+        std.debug.print("   ", .{});
+
+        if (preview_row == 0) {
+            std.debug.print("B ", .{});
+        } else {
+            std.debug.print("  ", .{});
+        }
+        printMiniRow(&state.current_piece.state_b, preview_row);
+        std.debug.print("\n", .{});
+    }
+
+    std.debug.print("\n", .{});
 
     // 2. Clone the static board memory so we can draw the falling piece onto it temporarily
     var render_grid = state.board.grid;
