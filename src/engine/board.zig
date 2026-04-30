@@ -28,19 +28,6 @@ pub const Board = struct {
         return (self.grid[row_idx] & ROW_MASK) == ROW_MASK;
     }
 
-    //clears full line and drops all row above by 1
-    pub fn clearAndDrop(self: *Board, full_row_idx: usize) void {
-        std.debug.assert(full_row_idx < HEIGHT);
-
-        //shift all rows above the cleared line down by one memory
-        var i: usize = full_row_idx;
-        while (i > 0) : (i -= 1) {
-            self.grid[i] = self.grid[i - 1];
-        }
-        //the very top row becomes 0
-        self.grid[0] = 0;
-    }
-
     //for multiple lines clear
     pub fn clearFullLines(self: *Board) u8 {
         var write_row: isize = HEIGHT - 1; //where the blocks should fall to
