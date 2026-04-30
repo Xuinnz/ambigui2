@@ -56,7 +56,7 @@ fn overlayPiece(render_grid: *[Board.HEIGHT]u16, piece: *const Piece) void {
     }
 }
 
-fn printMiniRow(piece: *const Piece, row: usize) void {
+fn printMiniRow(writer: *std.Io.Writer, piece: *const Piece, row: usize) !void {
     const shift_amount: u4 = @intCast((Piece.BOUND_SIZE - 1 - row) * 4);
     const piece_row: u16 = (piece.matrix >> shift_amount) & 0x0F;
 
@@ -64,48 +64,51 @@ fn printMiniRow(piece: *const Piece, row: usize) void {
     while (col < Piece.BOUND_SIZE) : (col += 1) {
         const is_block = (piece_row & (@as(u16, 1) << @as(u4, @intCast(col)))) != 0;
         if (is_block) {
-            std.debug.print("[]", .{});
+            try writer.print("[]", .{});
         } else {
-            std.debug.print(" .", .{});
+            try writer.print(" .", .{});
         }
     }
 }
 
-fn render(state: *const GameState) void {
+fn render(state: *const GameState) !void {
+    var out_buffer: [4096]u8 = undefined;
+    var out = std.fs.File.stdout().writer(out_buffer[0..]);
+    var writer = &out.interface;
     // 1. Clear the terminal and move cursor to top-left using ANSI escape codes
-    std.debug.print("\x1b[2J\x1b[H", .{});
+    try writer.print("\x1b[2J\x1b[H", .{});
 
-    std.debug.print("=== AMBIGUI2 ENGINE ===\n", .{});
-    std.debug.print("Score: {d} | Lines: {d}\n", .{ state.score, state.lines_cleared });
-    std.debug.print("Quantum Prob: {d}%\n\n", .{@as(u32, @intFromFloat(state.current_piece.prob_a * 100))});
-    std.debug.print("State A Impacted: {s} | State B Impacted: {s}\n\n", .{
-        if (state.state_a_impacted) "yes" else "no",
-        if (state.state_b_impacted) "yes" else "no",
+    try writer.print("=== AMBIGUI2 ENGINE ===\n", .{});
+    try writer.print("Score: {d} | Lines: {d}\n", .{ state.score, state.lines_cleared });
+    try writer.print("Quantum Prob: {d}%\n\n", .{@as(u32, @intFromFloat(state.current_piece.prob_a * 100))});
+    try writer.print("State A Grounded: {s} | State B Grounded: {s}\n\n", .{
+        if (state.current_piece.grounded_a) "yes" else "no",
+        if (state.current_piece.grounded_b) "yes" else "no",
     });
 
-    std.debug.print("Possible states:\n", .{});
+    try writer.print("Possible states:\n", .{});
 
     var preview_row: usize = 0;
     while (preview_row < Piece.BOUND_SIZE) : (preview_row += 1) {
         if (preview_row == 0) {
-            std.debug.print("A ", .{});
+            try writer.print("A ", .{});
         } else {
-            std.debug.print("  ", .{});
+            try writer.print("  ", .{});
         }
-        printMiniRow(&state.current_piece.state_a, preview_row);
+        try printMiniRow(writer, &state.current_piece.state_a, preview_row);
 
-        std.debug.print("   ", .{});
+        try writer.print("   ", .{});
 
         if (preview_row == 0) {
-            std.debug.print("B ", .{});
+            try writer.print("B ", .{});
         } else {
-            std.debug.print("  ", .{});
+            try writer.print("  ", .{});
         }
-        printMiniRow(&state.current_piece.state_b, preview_row);
-        std.debug.print("\n", .{});
+        try printMiniRow(writer, &state.current_piece.state_b, preview_row);
+        try writer.print("\n", .{});
     }
 
-    std.debug.print("\n", .{});
+    try writer.print("\n", .{});
 
     // 2. Clone the static board memory so we can draw the falling piece onto it temporarily
     var render_grid = state.board.grid;
@@ -117,20 +120,21 @@ fn render(state: *const GameState) void {
     // 4. Print the final composited grid
     for (render_grid) |raw_row| {
         const clean_row = raw_row & Board.ROW_MASK;
-        std.debug.print("|", .{});
+        try writer.print("|", .{});
         var col: usize = 0;
         while (col < Board.WIDTH) : (col += 1) {
             const is_block = (clean_row & (@as(u16, 1) << @as(u4, @intCast(col)))) != 0;
             if (is_block) {
-                std.debug.print("[]", .{});
+                try writer.print("[]", .{});
             } else {
-                std.debug.print(" .", .{});
+                try writer.print(" .", .{});
             }
         }
-        std.debug.print("|\n", .{});
+        try writer.print("|\n", .{});
     }
-    std.debug.print("=======================\n", .{});
-    std.debug.print("Controls: [<-] Left | [->] Right | [^] Rotate | [v] Faster Drop | [Space] Hard Drop | [q/Q] Quit\n", .{});
+    try writer.print("=======================\n", .{});
+    try writer.print("Controls: [<-] Left | [->] Right | [^] Rotate | [v] Faster Drop | [Space] Hard Drop | [q/Q] Quit\n", .{});
+    try writer.flush();
 }
 
 fn handleGameplayKey(state: *GameState, key: u8) bool {
@@ -209,7 +213,7 @@ pub fn main() !void {
         }
 
         // 3. RENDER FRAME
-        render(&state);
+        try render(&state);
 
         // Sleep for 16ms (~60 FPS) to prevent the CPU loop from maxing out at 100%
         std.Thread.sleep(16 * std.time.ns_per_ms);
