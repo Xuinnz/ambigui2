@@ -6,9 +6,12 @@ ambigui2 is a terminal-first Zig project focused on high-performance gameplay si
 
 ## Project Status
 
-Current repository state: Ongoing Engine Development
-- Implemented Board and Pieces logic.
-- Next to implement is physics and RNG.
+Current repository state: Playable Engine Prototype
+- Core engine loop is playable in the terminal (raw input + ANSI render).
+- Dual-state pieces, LUT rotations, and SRS CW wall kicks are implemented.
+- Bitboard board, collision/physics, and line clears are implemented.
+- 7-bag piece generation with next-piece staging is implemented.
+- Scoring uses non-linear line rewards with level progression.
 This README documents the intended production architecture and development workflow.
 
 ## Core Concepts
@@ -140,11 +143,11 @@ Planned testing layers:
 
 ## Roadmap
 
-1. Data structures and tetromino encoding
-2. Core physics and collision system
-3. Dual-state collapse and line clear rules
-4. Terminal rendering and interactive loop
-5. Expectimax agent and genetic training pipeline
+1. Data structures and tetromino encoding (done)
+2. Core physics and collision system (done)
+3. Dual-state collapse and line clear rules (done)
+4. Terminal rendering and interactive loop (done)
+5. Expectimax agent and genetic training pipeline (next)
 
 ## Contributing
 
