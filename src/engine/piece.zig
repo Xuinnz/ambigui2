@@ -87,6 +87,10 @@ pub const QuantumPiece = struct {
     state_a: Piece,
     state_b: Piece,
 
+    // Stored with the piece so hashing/serialization includes grounded state.
+    grounded_a: bool,
+    grounded_b: bool,
+
     //probability of piece collapsing into shape_a upong landing
     prob_a: f32,
 
@@ -99,6 +103,8 @@ pub const QuantumPiece = struct {
         return .{
             .state_a = Piece.init(shape_a),
             .state_b = Piece.init(shape_b),
+            .grounded_a = false,
+            .grounded_b = false,
             .prob_a = probability_a,
         };
     }
