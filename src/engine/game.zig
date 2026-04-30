@@ -27,6 +27,14 @@ const I_KICKS_CW: [4][5]Kick = .{
 
 const ZERO_KICK: [1]Kick = .{.{ .dx = 0, .dy = 0 }};
 
+fn kickTableForShape(shape: ShapeType, rot: u2) []const Kick {
+    return switch (shape) {
+        .O => ZERO_KICK[0..],
+        .I => I_KICKS_CW[rot][0..],
+        else => JLSTZ_KICKS_CW[rot][0..],
+    };
+}
+
 /// Defines the terminal conditions for a game session.
 pub const TopOutReason = enum {
     /// A piece spawned overlapping an existing locked block.
@@ -195,25 +203,25 @@ pub const GameState = struct {
         self.current_piece.state_a.rotateCW();
         self.current_piece.state_b.rotateCW();
 
-        const kicks = if (old_a.shape_type == .O or old_b.shape_type == .O)
-            ZERO_KICK[0..]
-        else if (old_a.shape_type == .I and old_b.shape_type == .I)
-            I_KICKS_CW[old_rot][0..]
-        else
-            JLSTZ_KICKS_CW[old_rot][0..];
-
         var applied = false;
-        for (kicks) |kick| {
-            self.current_piece.state_a.x = old_a.x + kick.dx;
-            self.current_piece.state_a.y = old_a.y + kick.dy;
-            self.current_piece.state_b.x = old_b.x + kick.dx;
-            self.current_piece.state_b.y = old_b.y + kick.dy;
+        const kicks_a = kickTableForShape(old_a.shape_type, old_rot);
+        const kicks_b = kickTableForShape(old_b.shape_type, old_rot);
 
-            if (!physics.checkCollision(&self.board, &self.current_piece.state_a) and
-                !physics.checkCollision(&self.board, &self.current_piece.state_b))
-            {
-                applied = true;
-                break;
+        outer: for (kicks_a) |kick_a| {
+            for (kicks_b) |kick_b| {
+                if (kick_a.dx != kick_b.dx or kick_a.dy != kick_b.dy) continue;
+
+                self.current_piece.state_a.x = old_a.x + kick_a.dx;
+                self.current_piece.state_a.y = old_a.y + kick_a.dy;
+                self.current_piece.state_b.x = old_b.x + kick_b.dx;
+                self.current_piece.state_b.y = old_b.y + kick_b.dy;
+
+                if (!physics.checkCollision(&self.board, &self.current_piece.state_a) and
+                    !physics.checkCollision(&self.board, &self.current_piece.state_b))
+                {
+                    applied = true;
+                    break :outer;
+                }
             }
         }
 
@@ -327,6 +335,7 @@ pub const GameState = struct {
 
         // O(N) line clear evaluation and score mutation.
         const cleared = self.board.clearFullLines();
+        std.debug.assert(cleared <= 4);
         self.lines_cleared += @as(u32, cleared);
         // Non-linear rewards (Tetris bonus) to avoid linear clear bias in evaluation.
         const line_scores = [_]u32{ 0, 100, 300, 500, 800 };
