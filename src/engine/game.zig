@@ -9,6 +9,24 @@ const QuantumPiece = piece_mod.QuantumPiece;
 const BAG_SIZE: usize = @typeInfo(ShapeType).@"enum".fields.len;
 const ALL_SHAPES: [BAG_SIZE]ShapeType = .{ .I, .O, .T, .S, .Z, .J, .L };
 
+const Kick = struct { dx: i8, dy: i8 };
+
+const JLSTZ_KICKS_CW: [4][5]Kick = .{
+    .{ .{ .dx = 0, .dy = 0 }, .{ .dx = -1, .dy = 0 }, .{ .dx = -1, .dy = -1 }, .{ .dx = 0, .dy = 2 }, .{ .dx = -1, .dy = 2 } },
+    .{ .{ .dx = 0, .dy = 0 }, .{ .dx = 1, .dy = 0 }, .{ .dx = 1, .dy = -1 }, .{ .dx = 0, .dy = 2 }, .{ .dx = 1, .dy = 2 } },
+    .{ .{ .dx = 0, .dy = 0 }, .{ .dx = 1, .dy = 0 }, .{ .dx = 1, .dy = 1 }, .{ .dx = 0, .dy = -2 }, .{ .dx = 1, .dy = -2 } },
+    .{ .{ .dx = 0, .dy = 0 }, .{ .dx = -1, .dy = 0 }, .{ .dx = -1, .dy = 1 }, .{ .dx = 0, .dy = -2 }, .{ .dx = -1, .dy = -2 } },
+};
+
+const I_KICKS_CW: [4][5]Kick = .{
+    .{ .{ .dx = 0, .dy = 0 }, .{ .dx = -2, .dy = 0 }, .{ .dx = 1, .dy = 0 }, .{ .dx = -2, .dy = 1 }, .{ .dx = 1, .dy = -2 } },
+    .{ .{ .dx = 0, .dy = 0 }, .{ .dx = -1, .dy = 0 }, .{ .dx = 2, .dy = 0 }, .{ .dx = -1, .dy = -2 }, .{ .dx = 2, .dy = 1 } },
+    .{ .{ .dx = 0, .dy = 0 }, .{ .dx = 2, .dy = 0 }, .{ .dx = -1, .dy = 0 }, .{ .dx = 2, .dy = -1 }, .{ .dx = -1, .dy = 2 } },
+    .{ .{ .dx = 0, .dy = 0 }, .{ .dx = 1, .dy = 0 }, .{ .dx = -2, .dy = 0 }, .{ .dx = 1, .dy = 2 }, .{ .dx = -2, .dy = -1 } },
+};
+
+const ZERO_KICK: [1]Kick = .{.{ .dx = 0, .dy = 0 }};
+
 /// Defines the terminal conditions for a game session.
 pub const TopOutReason = enum {
     /// A piece spawned overlapping an existing locked block.
@@ -21,15 +39,15 @@ pub const TopOutReason = enum {
 pub const GameState = struct {
     board: Board,
     current_piece: QuantumPiece,
+    next_piece: QuantumPiece,
     rng: std.Random.Xoshiro256,
     shape_bag: [BAG_SIZE]ShapeType,
     bag_index: usize,
     score: u32,
     lines_cleared: u32,
+    level: u32,
     game_over: bool,
     top_out_reason: ?TopOutReason,
-    state_a_impacted: bool,
-    state_b_impacted: bool,
 
     /// Initializes the engine. A fixed seed guarantees deterministic chance nodes
     /// for the Expectimax search tree and reproducible debugging.
@@ -37,20 +55,26 @@ pub const GameState = struct {
         var state = GameState{
             .board = Board.init(),
             .current_piece = undefined,
+            .next_piece = undefined,
             .rng = std.Random.Xoshiro256.init(seed),
             .shape_bag = undefined,
             .bag_index = BAG_SIZE,
             .score = 0,
             .lines_cleared = 0,
+            .level = 0,
             .game_over = false,
             .top_out_reason = null,
-            .state_a_impacted = false,
-            .state_b_impacted = false,
         };
 
         state.refillBag();
+        state.next_piece = state.generateQuantumPiece();
         state.spawnNextPiece();
         return state;
+    }
+
+    /// Returns a cheap value copy for search tree branching.
+    pub fn clone(self: *const GameState) GameState {
+        return self.*;
     }
 
     fn refillBag(self: *GameState) void {
@@ -90,25 +114,10 @@ pub const GameState = struct {
             return chosen;
         }
 
-        unreachable;
+        @panic("resolveSecondDuplicate: no valid non-duplicate found in bag — invariant broken");
     }
 
-    fn canMovePieceBy(self: *const GameState, piece: *const Piece, dx: i8, dy: i8) bool {
-        var probe = piece.*;
-        probe.x += dx;
-        probe.y += dy;
-        return !physics.checkCollision(&self.board, &probe);
-    }
-
-    fn refreshImpactFlags(self: *GameState) void {
-        self.state_a_impacted = !self.canMovePieceBy(&self.current_piece.state_a, 0, 1);
-        self.state_b_impacted = !self.canMovePieceBy(&self.current_piece.state_b, 0, 1);
-    }
-
-    /// Generates the next quantum superposition and checks for spawn obstruction.
-    pub fn spawnNextPiece(self: *GameState) void {
-        if (self.game_over) return;
-
+    fn generateQuantumPiece(self: *GameState) QuantumPiece {
         const shape_a = self.drawFromBag();
         var shape_b = self.drawFromBag();
 
@@ -121,9 +130,29 @@ pub const GameState = struct {
 
         const random = self.rng.random();
         const prob = 0.1 + (random.float(f32) * 0.8);
-        self.current_piece = QuantumPiece.init(shape_a, shape_b, prob);
-        self.state_a_impacted = false;
-        self.state_b_impacted = false;
+        return QuantumPiece.init(shape_a, shape_b, prob);
+    }
+
+    fn canMovePieceBy(self: *const GameState, piece: *const Piece, dx: i8, dy: i8) bool {
+        var probe = piece.*;
+        probe.x += dx;
+        probe.y += dy;
+        return !physics.checkCollision(&self.board, &probe);
+    }
+
+    fn refreshImpactFlags(self: *GameState) void {
+        self.current_piece.grounded_a = !self.canMovePieceBy(&self.current_piece.state_a, 0, 1);
+        self.current_piece.grounded_b = !self.canMovePieceBy(&self.current_piece.state_b, 0, 1);
+    }
+
+    /// Generates the next quantum superposition and checks for spawn obstruction.
+    pub fn spawnNextPiece(self: *GameState) void {
+        if (self.game_over) return;
+
+        self.current_piece = self.next_piece;
+        self.current_piece.grounded_a = false;
+        self.current_piece.grounded_b = false;
+        self.next_piece = self.generateQuantumPiece();
 
         // Trigger 1 (Block Out): Ensure the spawn zone is mathematically clear.
         if (physics.checkQuantumCollision(&self.board, &self.current_piece)) {
@@ -159,21 +188,38 @@ pub const GameState = struct {
     pub fn tryRotateCW(self: *GameState) void {
         if (self.game_over) return;
 
-        const old_a = self.current_piece.state_a.matrix;
-        const old_b = self.current_piece.state_b.matrix;
-        const old_rot_a = self.current_piece.state_a.rotation_idx;
-        const old_rot_b = self.current_piece.state_b.rotation_idx;
+        const old_a = self.current_piece.state_a;
+        const old_b = self.current_piece.state_b;
+        const old_rot = self.current_piece.state_a.rotation_idx;
 
         self.current_piece.state_a.rotateCW();
         self.current_piece.state_b.rotateCW();
 
-        if (physics.checkCollision(&self.board, &self.current_piece.state_a) or
-            physics.checkCollision(&self.board, &self.current_piece.state_b))
-        {
-            self.current_piece.state_a.matrix = old_a;
-            self.current_piece.state_b.matrix = old_b;
-            self.current_piece.state_a.rotation_idx = old_rot_a;
-            self.current_piece.state_b.rotation_idx = old_rot_b;
+        const kicks = if (old_a.shape_type == .O or old_b.shape_type == .O)
+            ZERO_KICK[0..]
+        else if (old_a.shape_type == .I and old_b.shape_type == .I)
+            I_KICKS_CW[old_rot][0..]
+        else
+            JLSTZ_KICKS_CW[old_rot][0..];
+
+        var applied = false;
+        for (kicks) |kick| {
+            self.current_piece.state_a.x = old_a.x + kick.dx;
+            self.current_piece.state_a.y = old_a.y + kick.dy;
+            self.current_piece.state_b.x = old_b.x + kick.dx;
+            self.current_piece.state_b.y = old_b.y + kick.dy;
+
+            if (!physics.checkCollision(&self.board, &self.current_piece.state_a) and
+                !physics.checkCollision(&self.board, &self.current_piece.state_b))
+            {
+                applied = true;
+                break;
+            }
+        }
+
+        if (!applied) {
+            self.current_piece.state_a = old_a;
+            self.current_piece.state_b = old_b;
             return;
         }
 
@@ -185,23 +231,23 @@ pub const GameState = struct {
     pub fn tickGravity(self: *GameState) bool {
         if (self.game_over) return false;
 
-        if (!self.state_a_impacted) {
+        if (!self.current_piece.grounded_a) {
             self.current_piece.state_a.y += 1;
             if (physics.checkCollision(&self.board, &self.current_piece.state_a)) {
                 self.current_piece.state_a.y -= 1;
-                self.state_a_impacted = true;
+                self.current_piece.grounded_a = true;
             }
         }
 
-        if (!self.state_b_impacted) {
+        if (!self.current_piece.grounded_b) {
             self.current_piece.state_b.y += 1;
             if (physics.checkCollision(&self.board, &self.current_piece.state_b)) {
                 self.current_piece.state_b.y -= 1;
-                self.state_b_impacted = true;
+                self.current_piece.grounded_b = true;
             }
         }
 
-        if (self.state_a_impacted and self.state_b_impacted) {
+        if (self.current_piece.grounded_a and self.current_piece.grounded_b) {
             self.collapseAndLock();
             return true;
         }
@@ -220,7 +266,7 @@ pub const GameState = struct {
     /// projects the result into the bitboard, and evaluates board clears.
     pub fn collapseAndLock(self: *GameState) void {
         if (self.game_over) return;
-        std.debug.assert(self.state_a_impacted and self.state_b_impacted);
+        std.debug.assert(self.current_piece.grounded_a and self.current_piece.grounded_b);
 
         const random = self.rng.random();
         const roll = random.float(f32);
@@ -248,8 +294,7 @@ pub const GameState = struct {
                 lock_out = true;
                 continue;
             }
-
-            std.debug.assert(board_y < @as(i16, @intCast(Board.HEIGHT)));
+            if (board_y >= @as(i16, @intCast(Board.HEIGHT))) continue;
 
             var projected_row: u16 = 0;
             const x_i16: i16 = @as(i16, final_piece.x);
@@ -283,7 +328,11 @@ pub const GameState = struct {
         // O(N) line clear evaluation and score mutation.
         const cleared = self.board.clearFullLines();
         self.lines_cleared += @as(u32, cleared);
-        self.score += @as(u32, cleared) * 100;
+        // Non-linear rewards (Tetris bonus) to avoid linear clear bias in evaluation.
+        const line_scores = [_]u32{ 0, 100, 300, 500, 800 };
+        self.score += line_scores[@intCast(cleared)] * (self.level + 1);
+        // Standard progression: level increases every 10 cleared lines.
+        self.level = self.lines_cleared / 10;
 
         self.spawnNextPiece();
     }
