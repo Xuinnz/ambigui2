@@ -35,6 +35,23 @@ fn kickTableForShape(shape: ShapeType, rot: u2) []const Kick {
     };
 }
 
+fn kickInList(kick: Kick, list: []const Kick) bool {
+    for (list) |entry| {
+        if (entry.dx == kick.dx and entry.dy == kick.dy) return true;
+    }
+    return false;
+}
+
+fn tryKick(self: *GameState, old_a: Piece, old_b: Piece, kick: Kick) bool {
+    self.current_piece.state_a.x = old_a.x + kick.dx;
+    self.current_piece.state_a.y = old_a.y + kick.dy;
+    self.current_piece.state_b.x = old_b.x + kick.dx;
+    self.current_piece.state_b.y = old_b.y + kick.dy;
+
+    return !physics.checkCollision(&self.board, &self.current_piece.state_a) and
+        !physics.checkCollision(&self.board, &self.current_piece.state_b);
+}
+
 /// Defines the terminal conditions for a game session.
 pub const TopOutReason = enum {
     /// A piece spawned overlapping an existing locked block.
@@ -206,21 +223,30 @@ pub const GameState = struct {
         var applied = false;
         const kicks_a = kickTableForShape(old_a.shape_type, old_rot);
         const kicks_b = kickTableForShape(old_b.shape_type, old_rot);
+        const primary = if (old_a.shape_type == .I or old_b.shape_type == .I)
+            I_KICKS_CW[old_rot][0..]
+        else
+            kicks_a;
+        const secondary = if (old_a.shape_type == .I)
+            kicks_b
+        else if (old_b.shape_type == .I)
+            kicks_a
+        else
+            kicks_b;
 
-        outer: for (kicks_a) |kick_a| {
-            for (kicks_b) |kick_b| {
-                if (kick_a.dx != kick_b.dx or kick_a.dy != kick_b.dy) continue;
+        for (primary) |kick| {
+            if (tryKick(self, old_a, old_b, kick)) {
+                applied = true;
+                break;
+            }
+        }
 
-                self.current_piece.state_a.x = old_a.x + kick_a.dx;
-                self.current_piece.state_a.y = old_a.y + kick_a.dy;
-                self.current_piece.state_b.x = old_b.x + kick_b.dx;
-                self.current_piece.state_b.y = old_b.y + kick_b.dy;
-
-                if (!physics.checkCollision(&self.board, &self.current_piece.state_a) and
-                    !physics.checkCollision(&self.board, &self.current_piece.state_b))
-                {
+        if (!applied) {
+            for (secondary) |kick| {
+                if (kickInList(kick, primary)) continue;
+                if (tryKick(self, old_a, old_b, kick)) {
                     applied = true;
-                    break :outer;
+                    break;
                 }
             }
         }
