@@ -42,14 +42,21 @@ fn kickInList(kick: Kick, list: []const Kick) bool {
     return false;
 }
 
+fn checkStateCollision(self: *const GameState, piece: *const Piece) bool {
+    return if (piece.shape_type == .I)
+        physics.checkCollisionIgnoreWalls(&self.board, piece)
+    else
+        physics.checkCollision(&self.board, piece);
+}
+
 fn tryKick(self: *GameState, old_a: Piece, old_b: Piece, kick: Kick) bool {
     self.current_piece.state_a.x = old_a.x + kick.dx;
     self.current_piece.state_a.y = old_a.y + kick.dy;
     self.current_piece.state_b.x = old_b.x + kick.dx;
     self.current_piece.state_b.y = old_b.y + kick.dy;
 
-    return !physics.checkCollision(&self.board, &self.current_piece.state_a) and
-        !physics.checkCollision(&self.board, &self.current_piece.state_b);
+    return !checkStateCollision(self, &self.current_piece.state_a) and
+        !checkStateCollision(self, &self.current_piece.state_b);
 }
 
 /// Defines the terminal conditions for a game session.
@@ -162,12 +169,14 @@ pub const GameState = struct {
         var probe = piece.*;
         probe.x += dx;
         probe.y += dy;
-        return !physics.checkCollision(&self.board, &probe);
+        return !checkStateCollision(self, &probe);
     }
 
     fn refreshImpactFlags(self: *GameState) void {
         self.current_piece.grounded_a = !self.canMovePieceBy(&self.current_piece.state_a, 0, 1);
         self.current_piece.grounded_b = !self.canMovePieceBy(&self.current_piece.state_b, 0, 1);
+        self.current_piece.wall_out_a = physics.checkWallCollision(&self.current_piece.state_a);
+        self.current_piece.wall_out_b = physics.checkWallCollision(&self.current_piece.state_b);
     }
 
     /// Generates the next quantum superposition and checks for spawn obstruction.
@@ -177,6 +186,8 @@ pub const GameState = struct {
         self.current_piece = self.next_piece;
         self.current_piece.grounded_a = false;
         self.current_piece.grounded_b = false;
+        self.current_piece.wall_out_a = false;
+        self.current_piece.wall_out_b = false;
         self.next_piece = self.generateQuantumPiece();
 
         // Trigger 1 (Block Out): Ensure the spawn zone is mathematically clear.
@@ -197,8 +208,8 @@ pub const GameState = struct {
         self.current_piece.state_a.x += dx;
         self.current_piece.state_b.x += dx;
 
-        if (physics.checkCollision(&self.board, &self.current_piece.state_a) or
-            physics.checkCollision(&self.board, &self.current_piece.state_b))
+        if (checkStateCollision(self, &self.current_piece.state_a) or
+            checkStateCollision(self, &self.current_piece.state_b))
         {
             self.current_piece.state_a.x -= dx;
             self.current_piece.state_b.x -= dx;
@@ -267,7 +278,7 @@ pub const GameState = struct {
 
         if (!self.current_piece.grounded_a) {
             self.current_piece.state_a.y += 1;
-            if (physics.checkCollision(&self.board, &self.current_piece.state_a)) {
+            if (checkStateCollision(self, &self.current_piece.state_a)) {
                 self.current_piece.state_a.y -= 1;
                 self.current_piece.grounded_a = true;
             }
@@ -275,7 +286,7 @@ pub const GameState = struct {
 
         if (!self.current_piece.grounded_b) {
             self.current_piece.state_b.y += 1;
-            if (physics.checkCollision(&self.board, &self.current_piece.state_b)) {
+            if (checkStateCollision(self, &self.current_piece.state_b)) {
                 self.current_piece.state_b.y -= 1;
                 self.current_piece.grounded_b = true;
             }
@@ -305,10 +316,15 @@ pub const GameState = struct {
         const random = self.rng.random();
         const roll = random.float(f32);
 
-        const final_piece = if (roll < self.current_piece.prob_a)
+        const collapse_is_a = roll < self.current_piece.prob_a;
+        const final_piece = if (collapse_is_a)
             self.current_piece.state_a
         else
             self.current_piece.state_b;
+        const final_wall_out = if (collapse_is_a)
+            self.current_piece.wall_out_a
+        else
+            self.current_piece.wall_out_b;
 
         var lock_out = false;
         var row: usize = 0;
@@ -345,8 +361,12 @@ pub const GameState = struct {
                 projected_row = piece_row << shift_left;
             }
 
-            // Invariant: The move generator must never feed coordinates out of bounds.
-            std.debug.assert((projected_row & ~Board.ROW_MASK) == 0);
+            if (final_piece.shape_type == .I and final_wall_out) {
+                projected_row &= Board.ROW_MASK;
+            } else {
+                // Invariant: The move generator must never feed coordinates out of bounds.
+                std.debug.assert((projected_row & ~Board.ROW_MASK) == 0);
+            }
 
             const b_y_usize: usize = @intCast(board_y);
             self.board.grid[b_y_usize] |= projected_row;
@@ -368,6 +388,15 @@ pub const GameState = struct {
         self.score += line_scores[@intCast(cleared)] * (self.level + 1);
         // Standard progression: level increases every 10 cleared lines.
         self.level = self.lines_cleared / 10;
+
+        if (final_piece.shape_type == .I and final_wall_out) {
+            const hole_col: usize = Board.WIDTH / 2;
+            if (self.board.addPenaltyLine(hole_col)) {
+                self.game_over = true;
+                self.top_out_reason = .lock_out;
+                return;
+            }
+        }
 
         self.spawnNextPiece();
     }
