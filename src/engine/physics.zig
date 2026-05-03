@@ -79,6 +79,71 @@ pub fn checkCollision(board: *const Board, piece: *const Piece) bool {
     return false;
 }
 
+/// Checks only left/right wall overlap for a piece.
+pub fn checkWallCollision(piece: *const Piece) bool {
+    var row: usize = 0;
+
+    while (row < Piece.BOUND_SIZE) : (row += 1) {
+        const shift_amount: u4 = @intCast((Piece.BOUND_SIZE - 1 - row) * 4);
+        const piece_row: u16 = (piece.matrix >> shift_amount) & 0x0F;
+
+        if (piece_row == 0) continue;
+
+        const x_i16: i16 = @as(i16, piece.x);
+        if (x_i16 < 0) {
+            const shift_right_i16: i16 = -x_i16;
+            std.debug.assert(shift_right_i16 <= 15);
+            const shift_right: u4 = @intCast(shift_right_i16);
+            const projected_piece_row: u16 = piece_row >> shift_right;
+
+            if ((projected_piece_row << shift_right) != piece_row) return true;
+        } else {
+            std.debug.assert(x_i16 <= 15);
+            const shift_left: u4 = @intCast(x_i16);
+            const projected_piece_row: u16 = piece_row << shift_left;
+            if ((projected_piece_row & ~Board.ROW_MASK) != 0) return true;
+        }
+    }
+
+    return false;
+}
+
+/// Checks collision against the floor and locked blocks, ignoring wall overlap.
+pub fn checkCollisionIgnoreWalls(board: *const Board, piece: *const Piece) bool {
+    var row: usize = 0;
+    const board_height_i16: i16 = @intCast(Board.HEIGHT);
+
+    while (row < Piece.BOUND_SIZE) : (row += 1) {
+        const shift_amount: u4 = @intCast((Piece.BOUND_SIZE - 1 - row) * 4);
+        const piece_row: u16 = (piece.matrix >> shift_amount) & 0x0F;
+
+        if (piece_row == 0) continue;
+
+        const board_y: i16 = @as(i16, piece.y) + @as(i16, @intCast(row));
+        if (board_y >= board_height_i16) return true;
+        if (board_y < 0) continue;
+
+        var projected_piece_row: u16 = 0;
+        const x_i16: i16 = @as(i16, piece.x);
+        if (x_i16 < 0) {
+            const shift_right_i16: i16 = -x_i16;
+            std.debug.assert(shift_right_i16 <= 15);
+            const shift_right: u4 = @intCast(shift_right_i16);
+            projected_piece_row = piece_row >> shift_right;
+        } else {
+            std.debug.assert(x_i16 <= 15);
+            const shift_left: u4 = @intCast(x_i16);
+            projected_piece_row = piece_row << shift_left;
+        }
+
+        const board_row_idx: usize = @intCast(board_y);
+        const masked_projected: u16 = projected_piece_row & Board.ROW_MASK;
+        if ((board.grid[board_row_idx] & masked_projected) != 0) return true;
+    }
+
+    return false;
+}
+
 /// Checks collision for a Dual-State piece.
 /// Returns true if either deterministic branch collides.
 pub inline fn checkQuantumCollision(board: *const Board, q_piece: *const QuantumPiece) bool {
