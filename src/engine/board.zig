@@ -57,6 +57,23 @@ pub const Board = struct {
         return cleared;
     }
 
+    /// Adds a garbage line at the bottom and returns true if the top row overflowed.
+    pub fn addPenaltyLine(self: *Board, hole_col: usize) bool {
+        std.debug.assert(hole_col < WIDTH);
+
+        const overflow = (self.grid[0] & ROW_MASK) != 0;
+        var row: usize = 0;
+        while (row + 1 < HEIGHT) : (row += 1) {
+            self.grid[row] = self.grid[row + 1] & ROW_MASK;
+        }
+
+        var penalty_row: u16 = ROW_MASK;
+        penalty_row &= ~(@as(u16, 1) << @as(u4, @intCast(hole_col)));
+        self.grid[HEIGHT - 1] = penalty_row;
+
+        return overflow;
+    }
+
     //helper function to visualize
     pub fn debugPrint(self: *const Board) void {
         std.debug.print("\n=== BOARD STATE ===\n", .{});
@@ -114,32 +131,26 @@ test "Board.isLineFull checks only the lower 10 bits" {
     try std.testing.expect(!board.isLineFull(5));
 }
 
-test "Board.clearAndDrop shifts rows above downward" {
+test "Board.addPenaltyLine shifts rows up and inserts garbage" {
     var board = Board.init();
-    board.grid[0] = 0x0001;
-    board.grid[1] = 0x0002;
-    board.grid[2] = 0x0004;
-    board.grid[3] = Board.ROW_MASK;
-    board.grid[4] = 0x0008;
+    board.grid[18] = 0x0003;
+    board.grid[19] = 0x0004;
 
-    board.clearAndDrop(3);
+    const overflow = board.addPenaltyLine(0);
 
-    try std.testing.expectEqual(@as(u16, 0), board.grid[0]);
-    try std.testing.expectEqual(@as(u16, 0x0001), board.grid[1]);
-    try std.testing.expectEqual(@as(u16, 0x0002), board.grid[2]);
-    try std.testing.expectEqual(@as(u16, 0x0004), board.grid[3]);
-    try std.testing.expectEqual(@as(u16, 0x0008), board.grid[4]);
+    try std.testing.expect(!overflow);
+    try std.testing.expectEqual(@as(u16, 0x0003), board.grid[17]);
+    try std.testing.expectEqual(@as(u16, 0x0004), board.grid[18]);
+    try std.testing.expectEqual(@as(u16, Board.ROW_MASK & ~@as(u16, 1)), board.grid[19]);
 }
 
-test "Board.clearAndDrop on top row only clears row 0" {
+test "Board.addPenaltyLine reports overflow when top row occupied" {
     var board = Board.init();
-    board.grid[0] = Board.ROW_MASK;
-    board.grid[1] = 0x0001;
+    board.grid[0] = 0x0001;
 
-    board.clearAndDrop(0);
+    const overflow = board.addPenaltyLine(3);
 
-    try std.testing.expectEqual(@as(u16, 0), board.grid[0]);
-    try std.testing.expectEqual(@as(u16, 0x0001), board.grid[1]);
+    try std.testing.expect(overflow);
 }
 
 test "Board.clearFullLines clears one full row" {
