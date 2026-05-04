@@ -85,6 +85,13 @@ fn render(state: *const GameState) !void {
         if (state.current_piece.grounded_a) "yes" else "no",
         if (state.current_piece.grounded_b) "yes" else "no",
     });
+    const penalty_pending = (state.current_piece.state_a.shape_type == .I and state.current_piece.wall_out_a) or
+        (state.current_piece.state_b.shape_type == .I and state.current_piece.wall_out_b);
+    try writer.print("State A Wall Out: {s} | State B Wall Out: {s}\n", .{
+        if (state.current_piece.wall_out_a) "yes" else "no",
+        if (state.current_piece.wall_out_b) "yes" else "no",
+    });
+    try writer.print("Penalty Pending: {s}\n\n", .{if (penalty_pending) "yes" else "no"});
 
     try writer.print("Possible states:\n", .{});
 
