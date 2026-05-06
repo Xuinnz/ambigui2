@@ -11,6 +11,30 @@ const ALL_SHAPES: [BAG_SIZE]ShapeType = .{ .I, .O, .T, .S, .Z, .J, .L };
 
 const Kick = struct { dx: i8, dy: i8 };
 
+const MAX_MOVES: usize = 128;
+
+pub const Move = struct {
+    state_a: Piece,
+    state_b: Piece,
+    wall_out_a: bool,
+    wall_out_b: bool,
+};
+
+pub const MoveList = struct {
+    items: [MAX_MOVES]Move,
+    len: usize,
+
+    pub fn init() MoveList {
+        return .{ .items = undefined, .len = 0 };
+    }
+
+    pub fn append(self: *MoveList, move: Move) void {
+        std.debug.assert(self.len < self.items.len);
+        self.items[self.len] = move;
+        self.len += 1;
+    }
+};
+
 const JLSTZ_KICKS_CW: [4][5]Kick = .{
     .{ .{ .dx = 0, .dy = 0 }, .{ .dx = -1, .dy = 0 }, .{ .dx = -1, .dy = -1 }, .{ .dx = 0, .dy = 2 }, .{ .dx = -1, .dy = 2 } },
     .{ .{ .dx = 0, .dy = 0 }, .{ .dx = 1, .dy = 0 }, .{ .dx = 1, .dy = -1 }, .{ .dx = 0, .dy = 2 }, .{ .dx = 1, .dy = 2 } },
@@ -107,6 +131,65 @@ pub const GameState = struct {
     /// Returns a cheap value copy for search tree branching.
     pub fn clone(self: *const GameState) GameState {
         return self.*;
+    }
+
+    /// Enumerates legal placements for the current quantum piece.
+    pub fn getMoves(self: *const GameState) MoveList {
+        var moves = MoveList.init();
+
+        const base_a = self.current_piece.state_a;
+        const base_b = self.current_piece.state_b;
+        const min_x: i8 = -@as(i8, @intCast(Piece.BOUND_SIZE));
+        const max_x: i8 = @as(i8, @intCast(Board.WIDTH + Piece.BOUND_SIZE));
+
+        var rot_steps: usize = 0;
+        while (rot_steps < 4) : (rot_steps += 1) {
+            var rot_a = base_a;
+            var rot_b = base_b;
+            var r: usize = 0;
+            while (r < rot_steps) : (r += 1) {
+                rot_a.rotateCW();
+                rot_b.rotateCW();
+            }
+
+            var x: i8 = min_x;
+            while (x <= max_x) : (x += 1) {
+                var probe_a = rot_a;
+                var probe_b = rot_b;
+                probe_a.x = x;
+                probe_b.x = x;
+
+                if (checkStateCollision(self, &probe_a) or
+                    checkStateCollision(self, &probe_b))
+                {
+                    continue;
+                }
+
+                var drop_a = probe_a;
+                while (!checkStateCollision(self, &drop_a)) {
+                    drop_a.y += 1;
+                }
+                drop_a.y -= 1;
+
+                var drop_b = probe_b;
+                while (!checkStateCollision(self, &drop_b)) {
+                    drop_b.y += 1;
+                }
+                drop_b.y -= 1;
+
+                const wall_out_a = physics.checkWallCollision(&drop_a);
+                const wall_out_b = physics.checkWallCollision(&drop_b);
+
+                moves.append(.{
+                    .state_a = drop_a,
+                    .state_b = drop_b,
+                    .wall_out_a = wall_out_a,
+                    .wall_out_b = wall_out_b,
+                });
+            }
+        }
+
+        return moves;
     }
 
     fn refillBag(self: *GameState) void {
