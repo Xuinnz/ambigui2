@@ -96,6 +96,8 @@ pub const GameState = struct {
     board: Board,
     current_piece: QuantumPiece,
     next_piece: QuantumPiece,
+    held_piece: ?QuantumPiece,
+    hold_used: bool,
     rng: std.Random.Xoshiro256,
     shape_bag: [BAG_SIZE]ShapeType,
     bag_index: usize,
@@ -112,6 +114,8 @@ pub const GameState = struct {
             .board = Board.init(),
             .current_piece = undefined,
             .next_piece = undefined,
+            .held_piece = null,
+            .hold_used = false,
             .rng = std.Random.Xoshiro256.init(seed),
             .shape_bag = undefined,
             .bag_index = BAG_SIZE,
@@ -262,18 +266,12 @@ pub const GameState = struct {
         self.current_piece.wall_out_b = physics.checkWallCollision(&self.current_piece.state_b);
     }
 
-    /// Generates the next quantum superposition and checks for spawn obstruction.
-    pub fn spawnNextPiece(self: *GameState) void {
-        if (self.game_over) return;
-
-        self.current_piece = self.next_piece;
+    fn prepareCurrentPiece(self: *GameState) void {
         self.current_piece.grounded_a = false;
         self.current_piece.grounded_b = false;
         self.current_piece.wall_out_a = false;
         self.current_piece.wall_out_b = false;
-        self.next_piece = self.generateQuantumPiece();
 
-        // Trigger 1 (Block Out): Ensure the spawn zone is mathematically clear.
         if (physics.checkQuantumCollision(&self.board, &self.current_piece)) {
             self.game_over = true;
             self.top_out_reason = .block_out;
@@ -281,6 +279,36 @@ pub const GameState = struct {
         }
 
         self.refreshImpactFlags();
+    }
+
+    /// Generates the next quantum superposition and checks for spawn obstruction.
+    pub fn spawnNextPiece(self: *GameState) void {
+        if (self.game_over) return;
+
+        self.current_piece = self.next_piece;
+        self.next_piece = self.generateQuantumPiece();
+        self.prepareCurrentPiece();
+    }
+
+    pub fn tryHold(self: *GameState) void {
+        if (self.game_over or self.hold_used) return;
+
+        var stored = self.current_piece;
+        stored.resetToSpawn();
+
+        if (self.held_piece) |held| {
+            var swap_in = held;
+            swap_in.resetToSpawn();
+            self.held_piece = stored;
+            self.hold_used = true;
+            self.current_piece = swap_in;
+            self.prepareCurrentPiece();
+            return;
+        }
+
+        self.held_piece = stored;
+        self.hold_used = true;
+        self.spawnNextPiece();
     }
 
     /// Attempts a horizontal move for both states together.
@@ -481,6 +509,7 @@ pub const GameState = struct {
             }
         }
 
+        self.hold_used = false;
         self.spawnNextPiece();
     }
 };
