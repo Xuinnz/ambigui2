@@ -113,6 +113,15 @@ pub const QuantumPiece = struct {
         };
     }
 
+    pub fn resetToSpawn(self: *QuantumPiece) void {
+        self.state_a = Piece.init(self.state_a.shape_type);
+        self.state_b = Piece.init(self.state_b.shape_type);
+        self.grounded_a = false;
+        self.grounded_b = false;
+        self.wall_out_a = false;
+        self.wall_out_b = false;
+    }
+
     // combines the bitmask of both states into a single shadow
     pub inline fn getSuperpositionMask(self: *const QuantumPiece) u16 {
         return self.state_a.matrix | self.state_b.matrix;
