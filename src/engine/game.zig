@@ -1,6 +1,7 @@
 const std = @import("std");
 const Board = @import("board.zig").Board;
 const physics = @import("physics.zig");
+const zobrist = @import("../ai/zobrist.zig");
 const piece_mod = @import("piece.zig");
 const ShapeType = piece_mod.ShapeType;
 const Piece = piece_mod.Piece;
@@ -33,6 +34,67 @@ pub const MoveList = struct {
         self.items[self.len] = move;
         self.len += 1;
     }
+};
+
+pub const EvalCache = struct {
+    col_heights: [Board.WIDTH]u8,
+    hole_count: u16,
+    bumpiness: u16,
+    aggregate_height: u16,
+
+    pub fn init() EvalCache {
+        return .{
+            .col_heights = [_]u8{0} ** Board.WIDTH,
+            .hole_count = 0,
+            .bumpiness = 0,
+            .aggregate_height = 0,
+        };
+    }
+
+    pub fn recompute(self: *EvalCache, board: *const Board) void {
+        self.hole_count = 0;
+        self.bumpiness = 0;
+        self.aggregate_height = 0;
+
+        var col: usize = 0;
+        while (col < Board.WIDTH) : (col += 1) {
+            const col_mask: u16 = @as(u16, 1) << @as(u4, @intCast(col));
+            var height: u8 = 0;
+            var seen_block = false;
+
+            var row: usize = 0;
+            while (row < Board.HEIGHT) : (row += 1) {
+                const row_masked = board.grid[row] & Board.ROW_MASK;
+                const is_block = (row_masked & col_mask) != 0;
+                if (is_block) {
+                    if (!seen_block) {
+                        seen_block = true;
+                        height = @as(u8, @intCast(Board.HEIGHT - row));
+                    }
+                } else if (seen_block) {
+                    self.hole_count += 1;
+                }
+            }
+
+            self.col_heights[col] = height;
+            self.aggregate_height += @as(u16, height);
+        }
+
+        col = 0;
+        while (col + 1 < Board.WIDTH) : (col += 1) {
+            const left = @as(i16, self.col_heights[col]);
+            const right = @as(i16, self.col_heights[col + 1]);
+            const diff = left - right;
+            self.bumpiness += @as(u16, @intCast(@abs(diff)));
+        }
+    }
+};
+
+pub const Weights = struct {
+    w_aggregate: f32,
+    w_holes: f32,
+    w_bumpiness: f32,
+    w_lines: f32,
 };
 
 const JLSTZ_KICKS_CW: [4][5]Kick = .{
@@ -94,6 +156,8 @@ pub const TopOutReason = enum {
 /// Manages the deterministic game loop, state transitions, and PRNG.
 pub const GameState = struct {
     board: Board,
+    eval_cache: EvalCache,
+    zobrist_hash: u64,
     current_piece: QuantumPiece,
     next_piece: QuantumPiece,
     held_piece: ?QuantumPiece,
@@ -112,6 +176,8 @@ pub const GameState = struct {
     pub fn init(seed: u64) GameState {
         var state = GameState{
             .board = Board.init(),
+            .eval_cache = EvalCache.init(),
+            .zobrist_hash = 0,
             .current_piece = undefined,
             .next_piece = undefined,
             .held_piece = null,
@@ -129,12 +195,22 @@ pub const GameState = struct {
         state.refillBag();
         state.next_piece = state.generateQuantumPiece();
         state.spawnNextPiece();
+        state.eval_cache.recompute(&state.board);
+        state.zobrist_hash = zobrist.hashBoard(&state.board);
         return state;
     }
 
     /// Returns a cheap value copy for search tree branching.
     pub fn clone(self: *const GameState) GameState {
         return self.*;
+    }
+
+    pub fn evaluate(self: *const GameState, weights: *const Weights) f32 {
+        const cache = &self.eval_cache;
+        return weights.w_aggregate * @as(f32, @floatFromInt(cache.aggregate_height)) +
+            weights.w_holes * @as(f32, @floatFromInt(cache.hole_count)) +
+            weights.w_bumpiness * @as(f32, @floatFromInt(cache.bumpiness)) +
+            weights.w_lines * @as(f32, @floatFromInt(self.lines_cleared));
     }
 
     /// Enumerates legal placements for the current quantum piece.
@@ -146,8 +222,20 @@ pub const GameState = struct {
         const min_x: i8 = -@as(i8, @intCast(Piece.BOUND_SIZE));
         const max_x: i8 = @as(i8, @intCast(Board.WIDTH + Piece.BOUND_SIZE));
 
+        const unique_rots_a: usize = switch (base_a.shape_type) {
+            .O => 1,
+            .S, .Z => 2,
+            else => 4,
+        };
+        const unique_rots_b: usize = switch (base_b.shape_type) {
+            .O => 1,
+            .S, .Z => 2,
+            else => 4,
+        };
+        const max_rots = @max(unique_rots_a, unique_rots_b);
+
         var rot_steps: usize = 0;
-        while (rot_steps < 4) : (rot_steps += 1) {
+        while (rot_steps < max_rots) : (rot_steps += 1) {
             var rot_a = base_a;
             var rot_b = base_b;
             var r: usize = 0;
@@ -162,6 +250,8 @@ pub const GameState = struct {
                 var probe_b = rot_b;
                 probe_a.x = x;
                 probe_b.x = x;
+                probe_a.y = Piece.DEFAULT_SPAWN_Y;
+                probe_b.y = Piece.DEFAULT_SPAWN_Y;
 
                 if (checkStateCollision(self, &probe_a) or
                     checkStateCollision(self, &probe_b))
@@ -438,6 +528,7 @@ pub const GameState = struct {
             self.current_piece.wall_out_b;
 
         var lock_out = false;
+        var hash_dirty = false;
         var row: usize = 0;
 
         // Project the 4x4 matrix into the 128-bit board architecture.
@@ -480,7 +571,15 @@ pub const GameState = struct {
             }
 
             const b_y_usize: usize = @intCast(board_y);
-            self.board.grid[b_y_usize] |= projected_row;
+            const old_row: u16 = self.board.grid[b_y_usize] & Board.ROW_MASK;
+            const new_row: u16 = old_row | projected_row;
+            if (new_row != old_row) {
+                if (old_row != 0) {
+                    self.zobrist_hash ^= zobrist.rowKey(b_y_usize, old_row);
+                }
+                self.board.grid[b_y_usize] = new_row;
+                self.zobrist_hash ^= zobrist.rowKey(b_y_usize, new_row);
+            }
         }
 
         // Trigger 2 (Lock Out): Evaluate skyline breach post-lock.
@@ -494,6 +593,9 @@ pub const GameState = struct {
         const cleared = self.board.clearFullLines();
         std.debug.assert(cleared <= 4);
         self.lines_cleared += @as(u32, cleared);
+        if (cleared > 0) {
+            hash_dirty = true;
+        }
         // Non-linear rewards (Tetris bonus) to avoid linear clear bias in evaluation.
         const line_scores = [_]u32{ 0, 100, 300, 500, 800 };
         self.score += line_scores[@intCast(cleared)] * (self.level + 1);
@@ -505,10 +607,20 @@ pub const GameState = struct {
             if (self.board.addPenaltyLine(hole_col)) {
                 self.game_over = true;
                 self.top_out_reason = .lock_out;
+                hash_dirty = true;
+                self.eval_cache.recompute(&self.board);
+                if (hash_dirty) {
+                    self.zobrist_hash = zobrist.hashBoard(&self.board);
+                }
                 return;
             }
+            hash_dirty = true;
         }
 
+        self.eval_cache.recompute(&self.board);
+        if (hash_dirty) {
+            self.zobrist_hash = zobrist.hashBoard(&self.board);
+        }
         self.hold_used = false;
         self.spawnNextPiece();
     }
