@@ -71,6 +71,13 @@ fn printMiniRow(writer: *std.Io.Writer, piece: *const Piece, row: usize) !void {
     }
 }
 
+fn printEmptyMiniRow(writer: *std.Io.Writer) !void {
+    var col: usize = 0;
+    while (col < Piece.BOUND_SIZE) : (col += 1) {
+        try writer.print(" .", .{});
+    }
+}
+
 fn render(state: *const GameState) !void {
     var out_buffer: [4096]u8 = undefined;
     var out = std.fs.File.stdout().writer(out_buffer[0..]);
@@ -115,6 +122,38 @@ fn render(state: *const GameState) !void {
         try writer.print("\n", .{});
     }
 
+    try writer.print("\nHold:\n", .{});
+
+    var hold_row: usize = 0;
+    while (hold_row < Piece.BOUND_SIZE) : (hold_row += 1) {
+        if (hold_row == 0) {
+            try writer.print("A ", .{});
+        } else {
+            try writer.print("  ", .{});
+        }
+
+        if (state.held_piece) |held| {
+            try printMiniRow(writer, &held.state_a, hold_row);
+        } else {
+            try printEmptyMiniRow(writer);
+        }
+
+        try writer.print("   ", .{});
+
+        if (hold_row == 0) {
+            try writer.print("B ", .{});
+        } else {
+            try writer.print("  ", .{});
+        }
+
+        if (state.held_piece) |held| {
+            try printMiniRow(writer, &held.state_b, hold_row);
+        } else {
+            try printEmptyMiniRow(writer);
+        }
+        try writer.print("\n", .{});
+    }
+
     try writer.print("\n", .{});
 
     // 2. Clone the static board memory so we can draw the falling piece onto it temporarily
@@ -140,12 +179,16 @@ fn render(state: *const GameState) !void {
         try writer.print("|\n", .{});
     }
     try writer.print("=======================\n", .{});
-    try writer.print("Controls: [<-] Left | [->] Right | [^] Rotate | [v] Faster Drop | [Space] Hard Drop | [q/Q] Quit\n", .{});
+    try writer.print("Controls: [<-] Left | [->] Right | [^] Rotate | [v] Faster Drop | [Space] Hard Drop | [C] Hold | [q/Q] Quit\n", .{});
     try writer.flush();
 }
 
 fn handleGameplayKey(state: *GameState, key: u8) bool {
     if (key == 'q' or key == 'Q') return true;
+    if (key == 'c' or key == 'C') {
+        state.tryHold();
+        return false;
+    }
     if (key == 's' or key == 'S') {
         _ = state.tickGravity();
         return false;
