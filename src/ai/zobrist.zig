@@ -21,7 +21,9 @@ pub inline fn penaltyHash(piece: *const QuantumPiece) u64 {
     return key;
 }
 
-const ROW_KEYS = buildRowKeys();
+var row_keys: [Board.HEIGHT][1 << Board.WIDTH]u64 = undefined;
+var row_keys_ready: bool = false;
+var row_keys_mutex: std.Thread.Mutex = .{};
 
 fn splitmix64(seed: u64) u64 {
     var z = seed +% 0x9E3779B97F4A7C15;
@@ -47,10 +49,22 @@ fn buildRowKeys() [Board.HEIGHT][1 << Board.WIDTH]u64 {
     return table;
 }
 
+fn ensureRowKeys() void {
+    if (row_keys_ready) return;
+
+    row_keys_mutex.lock();
+    defer row_keys_mutex.unlock();
+
+    if (row_keys_ready) return;
+    row_keys = buildRowKeys();
+    row_keys_ready = true;
+}
+
 pub inline fn rowKey(row: usize, mask: u16) u64 {
     std.debug.assert(row < Board.HEIGHT);
+    ensureRowKeys();
     const idx: usize = @intCast(mask & Board.ROW_MASK);
-    return ROW_KEYS[row][idx];
+    return row_keys[row][idx];
 }
 
 pub fn hashBoard(board: *const Board) u64 {
