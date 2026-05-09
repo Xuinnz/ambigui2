@@ -36,6 +36,41 @@ pub const MoveList = struct {
     }
 };
 
+test "EvalCache recompute empty board" {
+    var board = Board.init();
+    var cache = EvalCache.init();
+    cache.recompute(&board);
+
+    try std.testing.expectEqual(@as(u16, 0), cache.hole_count);
+    try std.testing.expectEqual(@as(u16, 0), cache.bumpiness);
+    try std.testing.expectEqual(@as(u16, 0), cache.aggregate_height);
+
+    for (cache.col_heights) |height| {
+        try std.testing.expectEqual(@as(u8, 0), height);
+    }
+}
+
+test "EvalCache recompute metrics" {
+    var board = Board.init();
+    board.grid[15] = (@as(u16, 1) << 3);
+    board.grid[17] = (@as(u16, 1) << 1);
+    board.grid[18] = (@as(u16, 1) << 0);
+    board.grid[19] = (@as(u16, 1) << 0) | (@as(u16, 1) << 3);
+
+    var cache = EvalCache.init();
+    cache.recompute(&board);
+
+    try std.testing.expectEqual(@as(u8, 2), cache.col_heights[0]);
+    try std.testing.expectEqual(@as(u8, 3), cache.col_heights[1]);
+    try std.testing.expectEqual(@as(u8, 0), cache.col_heights[2]);
+    try std.testing.expectEqual(@as(u8, 5), cache.col_heights[3]);
+    try std.testing.expectEqual(@as(u8, 0), cache.col_heights[4]);
+
+    try std.testing.expectEqual(@as(u16, 5), cache.hole_count);
+    try std.testing.expectEqual(@as(u16, 14), cache.bumpiness);
+    try std.testing.expectEqual(@as(u16, 10), cache.aggregate_height);
+}
+
 pub const EvalCache = struct {
     col_heights: [Board.WIDTH]u8,
     hole_count: u16,
