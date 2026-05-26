@@ -13,6 +13,7 @@ const ALL_SHAPES: [BAG_SIZE]ShapeType = .{ .I, .O, .T, .S, .Z, .J, .L };
 const Kick = struct { dx: i8, dy: i8 };
 
 const MAX_MOVES: usize = 128;
+const LOCK_DELAY_TICKS: u8 = 2;
 
 pub const Move = struct {
     state_a: Piece,
@@ -197,6 +198,7 @@ pub const GameState = struct {
     next_piece: QuantumPiece,
     held_piece: ?QuantumPiece,
     hold_used: bool,
+    lock_delay_counter: u8,
     rng: std.Random.Xoshiro256,
     shape_bag: [BAG_SIZE]ShapeType,
     bag_index: usize,
@@ -217,6 +219,7 @@ pub const GameState = struct {
             .next_piece = undefined,
             .held_piece = null,
             .hold_used = false,
+            .lock_delay_counter = 0,
             .rng = std.Random.Xoshiro256.init(seed),
             .shape_bag = undefined,
             .bag_index = BAG_SIZE,
@@ -396,6 +399,7 @@ pub const GameState = struct {
         self.current_piece.grounded_b = false;
         self.current_piece.wall_out_a = false;
         self.current_piece.wall_out_b = false;
+        self.lock_delay_counter = 0;
 
         if (physics.checkQuantumCollision(&self.board, &self.current_piece)) {
             self.game_over = true;
@@ -505,6 +509,7 @@ pub const GameState = struct {
         }
 
         self.refreshImpactFlags();
+        self.lock_delay_counter = 0;
     }
 
     /// Applies one gravity tick with independent fall states.
@@ -529,8 +534,14 @@ pub const GameState = struct {
         }
 
         if (self.current_piece.grounded_a and self.current_piece.grounded_b) {
-            self.collapseAndLock();
-            return true;
+            if (self.lock_delay_counter >= LOCK_DELAY_TICKS) {
+                self.lock_delay_counter = 0;
+                self.collapseAndLock();
+                return true;
+            }
+            self.lock_delay_counter += 1;
+        } else {
+            self.lock_delay_counter = 0;
         }
 
         return false;
