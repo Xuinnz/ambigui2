@@ -19,6 +19,8 @@ const LOCK_DELAY_TICKS: u8 = 2;
 pub const Move = struct {
     state_a: Piece,
     state_b: Piece,
+    a_valid: bool,
+    b_valid: bool,
     wall_out_a: bool,
     wall_out_b: bool,
 };
@@ -407,30 +409,36 @@ pub const GameState = struct {
                 probe_a.y = Piece.DEFAULT_SPAWN_Y;
                 probe_b.y = Piece.DEFAULT_SPAWN_Y;
 
-                if (checkStateCollision(self, &probe_a) or
-                    checkStateCollision(self, &probe_b))
-                {
-                    continue;
-                }
+                // Independent validity — skip only if BOTH states are blocked
+                const a_valid = !checkStateCollision(self, &probe_a);
+                const b_valid = !checkStateCollision(self, &probe_b);
+                if (!a_valid and !b_valid) continue;
 
+                // Drop each state independently to its own resting position
                 var drop_a = probe_a;
-                while (!checkStateCollision(self, &drop_a)) {
-                    drop_a.y += 1;
+                if (a_valid) {
+                    while (!checkStateCollision(self, &drop_a)) {
+                        drop_a.y += 1;
+                    }
+                    drop_a.y -= 1;
                 }
-                drop_a.y -= 1;
 
                 var drop_b = probe_b;
-                while (!checkStateCollision(self, &drop_b)) {
-                    drop_b.y += 1;
+                if (b_valid) {
+                    while (!checkStateCollision(self, &drop_b)) {
+                        drop_b.y += 1;
+                    }
+                    drop_b.y -= 1;
                 }
-                drop_b.y -= 1;
 
-                const wall_out_a = physics.checkWallCollision(&drop_a);
-                const wall_out_b = physics.checkWallCollision(&drop_b);
+                const wall_out_a = if (a_valid) physics.checkWallCollision(&drop_a) else false;
+                const wall_out_b = if (b_valid) physics.checkWallCollision(&drop_b) else false;
 
                 moves.append(.{
                     .state_a = drop_a,
                     .state_b = drop_b,
+                    .a_valid = a_valid,
+                    .b_valid = b_valid,
                     .wall_out_a = wall_out_a,
                     .wall_out_b = wall_out_b,
                 });
@@ -746,28 +754,18 @@ pub const GameState = struct {
     fn partialLock(self: *GameState, which: LockBranch) void {
         if (self.game_over) return;
 
-        const piece = switch (which) {
-            .a => self.current_piece.state_a,
-            .b => self.current_piece.state_b,
-        };
-
-        const wall_out = physics.checkWallCollision(&piece);
-        if (projectPiece(self, piece, wall_out)) {
-            self.game_over = true;
-            self.top_out_reason = .lock_out;
-            return;
-        }
-
+        // Do NOT write to the board yet — the other state is still active
+        // and may need to pass through this space. finalizeCollapse writes the winner.
         switch (which) {
             .a => {
+                self.current_piece.wall_out_a = physics.checkWallCollision(&self.current_piece.state_a);
                 self.current_piece.locked_a = true;
                 self.current_piece.grounded_a = true;
-                self.current_piece.wall_out_a = wall_out;
             },
             .b => {
+                self.current_piece.wall_out_b = physics.checkWallCollision(&self.current_piece.state_b);
                 self.current_piece.locked_b = true;
                 self.current_piece.grounded_b = true;
-                self.current_piece.wall_out_b = wall_out;
             },
         }
 
@@ -783,24 +781,14 @@ pub const GameState = struct {
         const roll = random.float(f32);
         const pick_a = roll < self.current_piece.prob_a;
 
-        const locked_a = self.current_piece.locked_a;
-        const locked_b = self.current_piece.locked_b;
-
-        if (locked_a and !pick_a) {
-            unprojectPiece(self, self.current_piece.state_a, self.current_piece.wall_out_a);
-        }
-        if (locked_b and pick_a) {
-            unprojectPiece(self, self.current_piece.state_b, self.current_piece.wall_out_b);
-        }
-
-        if (!locked_a and pick_a) {
+        // 1. ALWAYS project the winner to the board, ignoring legacy locked flags.
+        if (pick_a) {
             if (projectPiece(self, self.current_piece.state_a, self.current_piece.wall_out_a)) {
                 self.game_over = true;
                 self.top_out_reason = .lock_out;
                 return;
             }
-        }
-        if (!locked_b and !pick_a) {
+        } else {
             if (projectPiece(self, self.current_piece.state_b, self.current_piece.wall_out_b)) {
                 self.game_over = true;
                 self.top_out_reason = .lock_out;
@@ -812,6 +800,7 @@ pub const GameState = struct {
             self.current_piece.state_a
         else
             self.current_piece.state_b;
+
         const final_wall_out = if (pick_a)
             self.current_piece.wall_out_a
         else
@@ -822,9 +811,11 @@ pub const GameState = struct {
         const cleared = self.board.clearFullLines();
         std.debug.assert(cleared <= 4);
         self.lines_cleared += @as(u32, cleared);
+
         if (cleared > 0) {
             hash_dirty = true;
         }
+
         const line_scores = [_]u32{ 0, 100, 300, 500, 800 };
         self.score += line_scores[@intCast(cleared)] * (self.level + 1);
         self.level = self.lines_cleared / 10;
