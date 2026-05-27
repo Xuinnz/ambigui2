@@ -92,6 +92,8 @@ pub const QuantumPiece = struct {
     grounded_b: bool,
     wall_out_a: bool,
     wall_out_b: bool,
+    locked_a: bool,
+    locked_b: bool,
 
     //probability of piece collapsing into shape_a upong landing
     prob_a: f32,
@@ -109,6 +111,8 @@ pub const QuantumPiece = struct {
             .grounded_b = false,
             .wall_out_a = false,
             .wall_out_b = false,
+            .locked_a = false,
+            .locked_b = false,
             .prob_a = probability_a,
         };
     }
@@ -120,6 +124,8 @@ pub const QuantumPiece = struct {
         self.grounded_b = false;
         self.wall_out_a = false;
         self.wall_out_b = false;
+        self.locked_a = false;
+        self.locked_b = false;
     }
 
     // combines the bitmask of both states into a single shadow

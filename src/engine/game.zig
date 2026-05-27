@@ -11,6 +11,7 @@ const BAG_SIZE: usize = @typeInfo(ShapeType).@"enum".fields.len;
 const ALL_SHAPES: [BAG_SIZE]ShapeType = .{ .I, .O, .T, .S, .Z, .J, .L };
 
 const Kick = struct { dx: i8, dy: i8 };
+const LockBranch = enum { a, b };
 
 const MAX_MOVES: usize = 128;
 const LOCK_DELAY_TICKS: u8 = 2;
@@ -179,6 +180,123 @@ fn tryKick(self: *GameState, old_a: Piece, old_b: Piece, kick: Kick) bool {
 
     return !checkStateCollision(self, &self.current_piece.state_a) and
         !checkStateCollision(self, &self.current_piece.state_b);
+}
+
+fn tryKickSingle(self: *GameState, piece: *Piece, old: Piece, kick: Kick) bool {
+    piece.x = old.x + kick.dx;
+    piece.y = old.y + kick.dy;
+    return !checkStateCollision(self, piece);
+}
+
+fn rotateSingleCW(self: *GameState, piece: *Piece) bool {
+    const old = piece.*;
+    const old_rot = old.rotation_idx;
+    piece.rotateCW();
+
+    const kicks = kickTableForShape(old.shape_type, old_rot);
+    for (kicks) |kick| {
+        if (tryKickSingle(self, piece, old, kick)) return true;
+    }
+
+    piece.* = old;
+    return false;
+}
+
+fn projectPiece(self: *GameState, piece: Piece, wall_out: bool) bool {
+    var lock_out = false;
+    var row: usize = 0;
+
+    while (row < Piece.BOUND_SIZE) : (row += 1) {
+        const shift_amount: u4 = @intCast((Piece.BOUND_SIZE - 1 - row) * 4);
+        const piece_row: u16 = (piece.matrix >> shift_amount) & 0x0F;
+
+        if (piece_row == 0) continue;
+
+        const board_y: i16 = @as(i16, piece.y) + @as(i16, @intCast(row));
+        if (board_y < 0) {
+            lock_out = true;
+            continue;
+        }
+        if (board_y >= @as(i16, @intCast(Board.HEIGHT))) continue;
+
+        var projected_row: u16 = 0;
+        const x_i16: i16 = @as(i16, piece.x);
+        if (x_i16 < 0) {
+            const shift_right_i16: i16 = -x_i16;
+            std.debug.assert(shift_right_i16 <= 15);
+            const shift_right: u4 = @intCast(shift_right_i16);
+            projected_row = piece_row >> shift_right;
+        } else {
+            std.debug.assert(x_i16 <= 15);
+            const shift_left: u4 = @intCast(x_i16);
+            projected_row = piece_row << shift_left;
+        }
+
+        if (piece.shape_type == .I and wall_out) {
+            projected_row &= Board.ROW_MASK;
+        } else {
+            std.debug.assert((projected_row & ~Board.ROW_MASK) == 0);
+        }
+
+        const b_y_usize: usize = @intCast(board_y);
+        const old_row: u16 = self.board.grid[b_y_usize] & Board.ROW_MASK;
+        const new_row: u16 = old_row | projected_row;
+        if (new_row != old_row) {
+            if (old_row != 0) {
+                self.zobrist_hash ^= zobrist.rowKey(b_y_usize, old_row);
+            }
+            self.board.grid[b_y_usize] = new_row;
+            self.zobrist_hash ^= zobrist.rowKey(b_y_usize, new_row);
+        }
+    }
+
+    return lock_out;
+}
+
+fn unprojectPiece(self: *GameState, piece: Piece, wall_out: bool) void {
+    var row: usize = 0;
+
+    while (row < Piece.BOUND_SIZE) : (row += 1) {
+        const shift_amount: u4 = @intCast((Piece.BOUND_SIZE - 1 - row) * 4);
+        const piece_row: u16 = (piece.matrix >> shift_amount) & 0x0F;
+
+        if (piece_row == 0) continue;
+
+        const board_y: i16 = @as(i16, piece.y) + @as(i16, @intCast(row));
+        if (board_y < 0 or board_y >= @as(i16, @intCast(Board.HEIGHT))) continue;
+
+        var projected_row: u16 = 0;
+        const x_i16: i16 = @as(i16, piece.x);
+        if (x_i16 < 0) {
+            const shift_right_i16: i16 = -x_i16;
+            std.debug.assert(shift_right_i16 <= 15);
+            const shift_right: u4 = @intCast(shift_right_i16);
+            projected_row = piece_row >> shift_right;
+        } else {
+            std.debug.assert(x_i16 <= 15);
+            const shift_left: u4 = @intCast(x_i16);
+            projected_row = piece_row << shift_left;
+        }
+
+        if (piece.shape_type == .I and wall_out) {
+            projected_row &= Board.ROW_MASK;
+        } else {
+            std.debug.assert((projected_row & ~Board.ROW_MASK) == 0);
+        }
+
+        const b_y_usize: usize = @intCast(board_y);
+        const old_row: u16 = self.board.grid[b_y_usize] & Board.ROW_MASK;
+        const new_row: u16 = old_row & ~projected_row;
+        if (new_row != old_row) {
+            if (old_row != 0) {
+                self.zobrist_hash ^= zobrist.rowKey(b_y_usize, old_row);
+            }
+            self.board.grid[b_y_usize] = new_row;
+            if (new_row != 0) {
+                self.zobrist_hash ^= zobrist.rowKey(b_y_usize, new_row);
+            }
+        }
+    }
 }
 
 /// Defines the terminal conditions for a game session.
@@ -388,10 +506,19 @@ pub const GameState = struct {
     }
 
     fn refreshImpactFlags(self: *GameState) void {
-        self.current_piece.grounded_a = !self.canMovePieceBy(&self.current_piece.state_a, 0, 1);
-        self.current_piece.grounded_b = !self.canMovePieceBy(&self.current_piece.state_b, 0, 1);
-        self.current_piece.wall_out_a = physics.checkWallCollision(&self.current_piece.state_a);
-        self.current_piece.wall_out_b = physics.checkWallCollision(&self.current_piece.state_b);
+        if (self.current_piece.locked_a) {
+            self.current_piece.grounded_a = true;
+        } else {
+            self.current_piece.grounded_a = !self.canMovePieceBy(&self.current_piece.state_a, 0, 1);
+            self.current_piece.wall_out_a = physics.checkWallCollision(&self.current_piece.state_a);
+        }
+
+        if (self.current_piece.locked_b) {
+            self.current_piece.grounded_b = true;
+        } else {
+            self.current_piece.grounded_b = !self.canMovePieceBy(&self.current_piece.state_b, 0, 1);
+            self.current_piece.wall_out_b = physics.checkWallCollision(&self.current_piece.state_b);
+        }
     }
 
     fn prepareCurrentPiece(self: *GameState) void {
@@ -399,6 +526,8 @@ pub const GameState = struct {
         self.current_piece.grounded_b = false;
         self.current_piece.wall_out_a = false;
         self.current_piece.wall_out_b = false;
+        self.current_piece.locked_a = false;
+        self.current_piece.locked_b = false;
         self.lock_delay_counter = 0;
 
         if (physics.checkQuantumCollision(&self.board, &self.current_piece)) {
@@ -420,7 +549,7 @@ pub const GameState = struct {
     }
 
     pub fn tryHold(self: *GameState) void {
-        if (self.game_over or self.hold_used) return;
+        if (self.game_over or self.hold_used or self.current_piece.locked_a or self.current_piece.locked_b) return;
 
         var stored = self.current_piece;
         stored.resetToSpawn();
@@ -445,14 +574,18 @@ pub const GameState = struct {
     pub fn tryMoveHorizontal(self: *GameState, dx: i8) void {
         if (self.game_over) return;
 
-        self.current_piece.state_a.x += dx;
-        self.current_piece.state_b.x += dx;
+        const move_a = !self.current_piece.locked_a;
+        const move_b = !self.current_piece.locked_b;
+        if (!move_a and !move_b) return;
 
-        if (checkStateCollision(self, &self.current_piece.state_a) or
-            checkStateCollision(self, &self.current_piece.state_b))
+        if (move_a) self.current_piece.state_a.x += dx;
+        if (move_b) self.current_piece.state_b.x += dx;
+
+        if ((move_a and checkStateCollision(self, &self.current_piece.state_a)) or
+            (move_b and checkStateCollision(self, &self.current_piece.state_b)))
         {
-            self.current_piece.state_a.x -= dx;
-            self.current_piece.state_b.x -= dx;
+            if (move_a) self.current_piece.state_a.x -= dx;
+            if (move_b) self.current_piece.state_b.x -= dx;
             return;
         }
 
@@ -463,49 +596,60 @@ pub const GameState = struct {
     /// If either branch collides after rotation, both are reverted.
     pub fn tryRotateCW(self: *GameState) void {
         if (self.game_over) return;
-
-        const old_a = self.current_piece.state_a;
-        const old_b = self.current_piece.state_b;
-        const old_rot = self.current_piece.state_a.rotation_idx;
-
-        self.current_piece.state_a.rotateCW();
-        self.current_piece.state_b.rotateCW();
+        const active_a = !self.current_piece.locked_a;
+        const active_b = !self.current_piece.locked_b;
+        if (!active_a and !active_b) return;
 
         var applied = false;
-        const kicks_a = kickTableForShape(old_a.shape_type, old_rot);
-        const kicks_b = kickTableForShape(old_b.shape_type, old_rot);
-        const primary = if (old_a.shape_type == .I or old_b.shape_type == .I)
-            I_KICKS_CW[old_rot][0..]
-        else
-            kicks_a;
-        const secondary = if (old_a.shape_type == .I)
-            kicks_b
-        else if (old_b.shape_type == .I)
-            kicks_a
-        else
-            kicks_b;
+        if (active_a and active_b) {
+            const old_a = self.current_piece.state_a;
+            const old_b = self.current_piece.state_b;
+            const old_rot = self.current_piece.state_a.rotation_idx;
 
-        for (primary) |kick| {
-            if (tryKick(self, old_a, old_b, kick)) {
-                applied = true;
-                break;
-            }
-        }
+            self.current_piece.state_a.rotateCW();
+            self.current_piece.state_b.rotateCW();
 
-        if (!applied) {
-            for (secondary) |kick| {
-                if (kickInList(kick, primary)) continue;
+            const kicks_a = kickTableForShape(old_a.shape_type, old_rot);
+            const kicks_b = kickTableForShape(old_b.shape_type, old_rot);
+            const primary = if (old_a.shape_type == .I or old_b.shape_type == .I)
+                I_KICKS_CW[old_rot][0..]
+            else
+                kicks_a;
+            const secondary = if (old_a.shape_type == .I)
+                kicks_b
+            else if (old_b.shape_type == .I)
+                kicks_a
+            else
+                kicks_b;
+
+            for (primary) |kick| {
                 if (tryKick(self, old_a, old_b, kick)) {
                     applied = true;
                     break;
                 }
             }
-        }
 
-        if (!applied) {
-            self.current_piece.state_a = old_a;
-            self.current_piece.state_b = old_b;
-            return;
+            if (!applied) {
+                for (secondary) |kick| {
+                    if (kickInList(kick, primary)) continue;
+                    if (tryKick(self, old_a, old_b, kick)) {
+                        applied = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!applied) {
+                self.current_piece.state_a = old_a;
+                self.current_piece.state_b = old_b;
+                return;
+            }
+        } else if (active_a) {
+            applied = rotateSingleCW(self, &self.current_piece.state_a);
+            if (!applied) return;
+        } else {
+            applied = rotateSingleCW(self, &self.current_piece.state_b);
+            if (!applied) return;
         }
 
         self.refreshImpactFlags();
@@ -517,7 +661,10 @@ pub const GameState = struct {
     pub fn tickGravity(self: *GameState) bool {
         if (self.game_over) return false;
 
-        if (!self.current_piece.grounded_a) {
+        const active_a = !self.current_piece.locked_a;
+        const active_b = !self.current_piece.locked_b;
+
+        if (active_a and !self.current_piece.grounded_a) {
             self.current_piece.state_a.y += 1;
             if (checkStateCollision(self, &self.current_piece.state_a)) {
                 self.current_piece.state_a.y -= 1;
@@ -525,7 +672,7 @@ pub const GameState = struct {
             }
         }
 
-        if (!self.current_piece.grounded_b) {
+        if (active_b and !self.current_piece.grounded_b) {
             self.current_piece.state_b.y += 1;
             if (checkStateCollision(self, &self.current_piece.state_b)) {
                 self.current_piece.state_b.y -= 1;
@@ -533,15 +680,59 @@ pub const GameState = struct {
             }
         }
 
-        if (self.current_piece.grounded_a and self.current_piece.grounded_b) {
-            if (self.lock_delay_counter >= LOCK_DELAY_TICKS) {
-                self.lock_delay_counter = 0;
-                self.collapseAndLock();
-                return true;
+        if (active_a and active_b) {
+            if (self.current_piece.grounded_a and self.current_piece.grounded_b) {
+                if (self.lock_delay_counter >= LOCK_DELAY_TICKS) {
+                    self.lock_delay_counter = 0;
+                    self.finalizeCollapse();
+                    return true;
+                }
+                self.lock_delay_counter += 1;
+                return false;
             }
-            self.lock_delay_counter += 1;
-        } else {
+
+            if (self.current_piece.grounded_a) {
+                self.partialLock(.a);
+                return false;
+            }
+
+            if (self.current_piece.grounded_b) {
+                self.partialLock(.b);
+                return false;
+            }
+
             self.lock_delay_counter = 0;
+            return false;
+        }
+
+        if (active_a) {
+            if (self.current_piece.grounded_a) {
+                if (self.lock_delay_counter >= LOCK_DELAY_TICKS) {
+                    self.lock_delay_counter = 0;
+                    self.finalizeCollapse();
+                    return true;
+                }
+                self.lock_delay_counter += 1;
+                return false;
+            }
+
+            self.lock_delay_counter = 0;
+            return false;
+        }
+
+        if (active_b) {
+            if (self.current_piece.grounded_b) {
+                if (self.lock_delay_counter >= LOCK_DELAY_TICKS) {
+                    self.lock_delay_counter = 0;
+                    self.finalizeCollapse();
+                    return true;
+                }
+                self.lock_delay_counter += 1;
+                return false;
+            }
+
+            self.lock_delay_counter = 0;
+            return false;
         }
 
         return false;
@@ -554,98 +745,90 @@ pub const GameState = struct {
         }
     }
 
-    /// Resolves the quantum superposition into a deterministic state via PRNG,
-    /// projects the result into the bitboard, and evaluates board clears.
-    pub fn collapseAndLock(self: *GameState) void {
+    fn partialLock(self: *GameState, which: LockBranch) void {
         if (self.game_over) return;
-        std.debug.assert(self.current_piece.grounded_a and self.current_piece.grounded_b);
 
-        const random = self.rng.random();
-        const roll = random.float(f32);
+        const piece = switch (which) {
+            .a => self.current_piece.state_a,
+            .b => self.current_piece.state_b,
+        };
 
-        const collapse_is_a = roll < self.current_piece.prob_a;
-        const final_piece = if (collapse_is_a)
-            self.current_piece.state_a
-        else
-            self.current_piece.state_b;
-        const final_wall_out = if (collapse_is_a)
-            self.current_piece.wall_out_a
-        else
-            self.current_piece.wall_out_b;
-
-        var lock_out = false;
-        var hash_dirty = false;
-        var row: usize = 0;
-
-        // Project the 4x4 matrix into the 128-bit board architecture.
-        while (row < Piece.BOUND_SIZE) : (row += 1) {
-            const shift_amount: u4 = @intCast((Piece.BOUND_SIZE - 1 - row) * 4);
-            const piece_row: u16 = (final_piece.matrix >> shift_amount) & 0x0F;
-
-            if (piece_row == 0) continue;
-
-            const board_y: i16 = @as(i16, final_piece.y) + @as(i16, @intCast(row));
-
-            // If bits lock above the playable arena, flag for Trigger 2 (Lock Out).
-            // Do not write negative indices to the board array memory.
-            if (board_y < 0) {
-                lock_out = true;
-                continue;
-            }
-            if (board_y >= @as(i16, @intCast(Board.HEIGHT))) continue;
-
-            var projected_row: u16 = 0;
-            const x_i16: i16 = @as(i16, final_piece.x);
-
-            // Align the 4-bit shape mask with its physical column on the board.
-            if (x_i16 < 0) {
-                const shift_right_i16: i16 = -x_i16;
-                std.debug.assert(shift_right_i16 <= 15);
-                const shift_right: u4 = @intCast(shift_right_i16);
-                projected_row = piece_row >> shift_right;
-            } else {
-                std.debug.assert(x_i16 <= 15);
-                const shift_left: u4 = @intCast(x_i16);
-                projected_row = piece_row << shift_left;
-            }
-
-            if (final_piece.shape_type == .I and final_wall_out) {
-                projected_row &= Board.ROW_MASK;
-            } else {
-                // Invariant: The move generator must never feed coordinates out of bounds.
-                std.debug.assert((projected_row & ~Board.ROW_MASK) == 0);
-            }
-
-            const b_y_usize: usize = @intCast(board_y);
-            const old_row: u16 = self.board.grid[b_y_usize] & Board.ROW_MASK;
-            const new_row: u16 = old_row | projected_row;
-            if (new_row != old_row) {
-                if (old_row != 0) {
-                    self.zobrist_hash ^= zobrist.rowKey(b_y_usize, old_row);
-                }
-                self.board.grid[b_y_usize] = new_row;
-                self.zobrist_hash ^= zobrist.rowKey(b_y_usize, new_row);
-            }
-        }
-
-        // Trigger 2 (Lock Out): Evaluate skyline breach post-lock.
-        if (lock_out) {
+        const wall_out = physics.checkWallCollision(&piece);
+        if (projectPiece(self, piece, wall_out)) {
             self.game_over = true;
             self.top_out_reason = .lock_out;
             return;
         }
 
-        // O(N) line clear evaluation and score mutation.
+        switch (which) {
+            .a => {
+                self.current_piece.locked_a = true;
+                self.current_piece.grounded_a = true;
+                self.current_piece.wall_out_a = wall_out;
+            },
+            .b => {
+                self.current_piece.locked_b = true;
+                self.current_piece.grounded_b = true;
+                self.current_piece.wall_out_b = wall_out;
+            },
+        }
+
+        self.lock_delay_counter = 0;
+        self.refreshImpactFlags();
+    }
+
+    fn finalizeCollapse(self: *GameState) void {
+        if (self.game_over) return;
+        std.debug.assert(self.current_piece.grounded_a and self.current_piece.grounded_b);
+
+        const random = self.rng.random();
+        const roll = random.float(f32);
+        const pick_a = roll < self.current_piece.prob_a;
+
+        const locked_a = self.current_piece.locked_a;
+        const locked_b = self.current_piece.locked_b;
+
+        if (locked_a and !pick_a) {
+            unprojectPiece(self, self.current_piece.state_a, self.current_piece.wall_out_a);
+        }
+        if (locked_b and pick_a) {
+            unprojectPiece(self, self.current_piece.state_b, self.current_piece.wall_out_b);
+        }
+
+        if (!locked_a and pick_a) {
+            if (projectPiece(self, self.current_piece.state_a, self.current_piece.wall_out_a)) {
+                self.game_over = true;
+                self.top_out_reason = .lock_out;
+                return;
+            }
+        }
+        if (!locked_b and !pick_a) {
+            if (projectPiece(self, self.current_piece.state_b, self.current_piece.wall_out_b)) {
+                self.game_over = true;
+                self.top_out_reason = .lock_out;
+                return;
+            }
+        }
+
+        const final_piece = if (pick_a)
+            self.current_piece.state_a
+        else
+            self.current_piece.state_b;
+        const final_wall_out = if (pick_a)
+            self.current_piece.wall_out_a
+        else
+            self.current_piece.wall_out_b;
+
+        var hash_dirty = false;
+
         const cleared = self.board.clearFullLines();
         std.debug.assert(cleared <= 4);
         self.lines_cleared += @as(u32, cleared);
         if (cleared > 0) {
             hash_dirty = true;
         }
-        // Non-linear rewards (Tetris bonus) to avoid linear clear bias in evaluation.
         const line_scores = [_]u32{ 0, 100, 300, 500, 800 };
         self.score += line_scores[@intCast(cleared)] * (self.level + 1);
-        // Standard progression: level increases every 10 cleared lines.
         self.level = self.lines_cleared / 10;
 
         if (final_piece.shape_type == .I and final_wall_out) {
@@ -669,5 +852,11 @@ pub const GameState = struct {
         }
         self.hold_used = false;
         self.spawnNextPiece();
+    }
+
+    /// Resolves the quantum superposition into a deterministic state via PRNG,
+    /// projects the result into the bitboard, and evaluates board clears.
+    pub fn collapseAndLock(self: *GameState) void {
+        self.finalizeCollapse();
     }
 };
