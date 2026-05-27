@@ -131,7 +131,6 @@ pub const Weights = struct {
     w_aggregate: f32,
     w_holes: f32,
     w_bumpiness: f32,
-    w_lines: f32,
 };
 
 const JLSTZ_KICKS_CW: [4][5]Kick = .{
@@ -365,8 +364,7 @@ pub const GameState = struct {
         const cache = &self.eval_cache;
         return weights.w_aggregate * @as(f32, @floatFromInt(cache.aggregate_height)) +
             weights.w_holes * @as(f32, @floatFromInt(cache.hole_count)) +
-            weights.w_bumpiness * @as(f32, @floatFromInt(cache.bumpiness)) +
-            weights.w_lines * @as(f32, @floatFromInt(self.lines_cleared));
+            weights.w_bumpiness * @as(f32, @floatFromInt(cache.bumpiness));
     }
 
     /// Enumerates legal placements for the current quantum piece.
