@@ -773,13 +773,51 @@ pub const GameState = struct {
         self.refreshImpactFlags();
     }
 
-    fn finalizeCollapse(self: *GameState) void {
-        if (self.game_over) return;
-        std.debug.assert(self.current_piece.grounded_a and self.current_piece.grounded_b);
-
+    pub fn rollCollapsePick(self: *GameState) bool {
         const random = self.rng.random();
         const roll = random.float(f32);
-        const pick_a = roll < self.current_piece.prob_a;
+        return roll < self.current_piece.prob_a;
+    }
+
+    pub fn applyMoveDeterministic(self: *GameState, move: *const Move, pick_a: bool, advance_rng: bool) void {
+        if (self.game_over) return;
+
+        self.current_piece.state_a = move.state_a;
+        self.current_piece.state_b = move.state_b;
+        self.current_piece.wall_out_a = move.wall_out_a;
+        self.current_piece.wall_out_b = move.wall_out_b;
+        self.current_piece.grounded_a = true;
+        self.current_piece.grounded_b = true;
+        self.current_piece.locked_a = false;
+        self.current_piece.locked_b = false;
+        self.lock_delay_counter = 0;
+
+        if (advance_rng) {
+            _ = self.rollCollapsePick();
+        }
+
+        if (pick_a and !move.a_valid) {
+            self.game_over = true;
+            self.top_out_reason = .lock_out;
+            return;
+        }
+        if (!pick_a and !move.b_valid) {
+            self.game_over = true;
+            self.top_out_reason = .lock_out;
+            return;
+        }
+
+        self.finalizeCollapseWithPick(pick_a);
+    }
+
+    pub fn applyMove(self: *GameState, move: *const Move) void {
+        const pick_a = self.rollCollapsePick();
+        self.applyMoveDeterministic(move, pick_a, false);
+    }
+
+    fn finalizeCollapseWithPick(self: *GameState, pick_a: bool) void {
+        if (self.game_over) return;
+        std.debug.assert(self.current_piece.grounded_a and self.current_piece.grounded_b);
 
         // 1. ALWAYS project the winner to the board, ignoring legacy locked flags.
         if (pick_a) {
@@ -841,6 +879,12 @@ pub const GameState = struct {
         }
         self.hold_used = false;
         self.spawnNextPiece();
+    }
+
+    fn finalizeCollapse(self: *GameState) void {
+        if (self.game_over) return;
+        const pick_a = self.rollCollapsePick();
+        self.finalizeCollapseWithPick(pick_a);
     }
 
     /// Resolves the quantum superposition into a deterministic state via PRNG,
