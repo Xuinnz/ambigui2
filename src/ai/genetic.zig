@@ -46,7 +46,7 @@ pub fn main() !void {
 //         .tournament_size = 4,
 //         .elite_count = 4,
 //         .max_moves = 2000,
-//         .thread_count = 1,
+//         .thread_count = 11,
 //         .mutation_rate = 0.2,
 //         .mutation_scale = 0.5,
 //         .weight_min = -5.0,
@@ -164,10 +164,21 @@ fn evaluatePopulation(population: []Candidate, config: TrainerConfig, seeds: []c
     const threads = if (config.thread_count == 0) 1 else config.thread_count;
     const chunk = (population.len + threads - 1) / threads;
 
+    var thread_list: [16]std.Thread = undefined;
+    var thread_count_actual: usize = 0;
+
     var start: usize = 0;
     while (start < population.len) : (start += chunk) {
         const end = @min(start + chunk, population.len);
-        evaluateRange(population, config, seeds, start, end);
+        thread_list[thread_count_actual] = std.Thread.spawn(.{}, evaluateRange, .{
+            population, config, seeds, start, end,
+        }) catch continue;
+        thread_count_actual += 1;
+    }
+
+    var t: usize = 0;
+    while (t < thread_count_actual) : (t += 1) {
+        thread_list[t].join();
     }
 }
 
