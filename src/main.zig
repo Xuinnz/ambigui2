@@ -2,9 +2,17 @@ const std = @import("std");
 const posix = std.posix; // Handles raw terminal interaction in WSL/Linux
 const game_mod = @import("engine/game.zig");
 const GameState = game_mod.GameState;
+const expectimax = @import("ai/expectimax.zig");
+const heuristics = @import("ai/heuristics.zig");
 const Board = @import("engine/board.zig").Board;
 const piece_mod = @import("engine/piece.zig");
 const Piece = piece_mod.Piece;
+
+//depth = 5, width = 8 for presentation
+//depth 3, width = 5 for training
+const AI_DEPTH: u32 = 3;
+const AI_BEAM_WIDTH: usize = 5;
+const AI_STEP_INTERVAL_MS: i64 = 0;
 
 // --- TERMINAL MAGIC ---
 // This switches the Linux/WSL terminal out of "line mode" and into "raw mode"
@@ -88,17 +96,17 @@ fn render(state: *const GameState) !void {
     try writer.print("=== AMBIGUI2 ENGINE ===\n", .{});
     try writer.print("Score: {d} | Lines: {d}\n", .{ state.score, state.lines_cleared });
     try writer.print("Quantum Prob: {d}%\n\n", .{@as(u32, @intFromFloat(state.current_piece.prob_a * 100))});
-    try writer.print("State A Grounded: {s} | State B Grounded: {s}\n\n", .{
-        if (state.current_piece.grounded_a) "yes" else "no",
-        if (state.current_piece.grounded_b) "yes" else "no",
-    });
-    const penalty_pending = (state.current_piece.state_a.shape_type == .I and state.current_piece.wall_out_a) or
-        (state.current_piece.state_b.shape_type == .I and state.current_piece.wall_out_b);
-    try writer.print("State A Wall Out: {s} | State B Wall Out: {s}\n", .{
-        if (state.current_piece.wall_out_a) "yes" else "no",
-        if (state.current_piece.wall_out_b) "yes" else "no",
-    });
-    try writer.print("Penalty Pending: {s}\n\n", .{if (penalty_pending) "yes" else "no"});
+    // try writer.print("State A Grounded: {s} | State B Grounded: {s}\n\n", .{
+    //     if (state.current_piece.grounded_a) "yes" else "no",
+    //     if (state.current_piece.grounded_b) "yes" else "no",
+    // });
+    // const penalty_pending = (state.current_piece.state_a.shape_type == .I and state.current_piece.wall_out_a) or
+    //     (state.current_piece.state_b.shape_type == .I and state.current_piece.wall_out_b);
+    // try writer.print("State A Wall Out: {s} | State B Wall Out: {s}\n", .{
+    //     if (state.current_piece.wall_out_a) "yes" else "no",
+    //     if (state.current_piece.wall_out_b) "yes" else "no",
+    // });
+    // try writer.print("Penalty Pending: {s}\n\n", .{if (penalty_pending) "yes" else "no"});
 
     try writer.print("Possible states:\n", .{});
 
@@ -179,8 +187,21 @@ fn render(state: *const GameState) !void {
         try writer.print("|\n", .{});
     }
     try writer.print("=======================\n", .{});
-    try writer.print("Controls: [<-] Left | [->] Right | [^] Rotate | [v] Faster Drop | [Space] Hard Drop | [C] Hold | [q/Q] Quit\n", .{});
+    try writer.print("Controls: [<-] Left | [->] Right | [^] Rotate | [v] Faster Drop | [Space] Hard Drop | [C] Hold | [P] Toggle AI | [N] AI Step | [q/Q] Quit\n", .{});
     try writer.flush();
+}
+
+fn runAiMove(state: *GameState) void {
+    const move = expectimax.bestMoveWithOptions(state, &heuristics.DEFAULT_WEIGHTS, .{
+        .depth = AI_DEPTH,
+        .beam_width = AI_BEAM_WIDTH,
+    });
+    if (move) |chosen| {
+        state.applyMove(&chosen);
+    } else {
+        state.game_over = true;
+        state.top_out_reason = .block_out;
+    }
 }
 
 fn handleGameplayKey(state: *GameState, key: u8) bool {
@@ -216,10 +237,14 @@ pub fn main() !void {
     defer disableRawMode(orig_termios); // Ensure terminal resets even if game crashes
 
     // Initialize deterministic game state
-    var state = GameState.init(42);
+    var state = GameState.init(8241904821);
 
     var last_gravity_tick = std.time.milliTimestamp();
     const gravity_interval_ms: i64 = 500; // Piece falls every half second
+
+    var ai_autopilot_active = false;
+    var ai_step_requested = false;
+    var last_ai_tick = std.time.milliTimestamp();
 
     // Standard non-blocking buffer
     var buffer: [1]u8 = undefined;
@@ -236,33 +261,59 @@ pub fn main() !void {
                 if (key == 0x1b) {
                     esc_state = 1;
                 } else {
-                    if (handleGameplayKey(&state, key)) break;
+                    if (key == 'p' or key == 'P') {
+                        ai_autopilot_active = !ai_autopilot_active;
+                        ai_step_requested = false;
+                        last_ai_tick = std.time.milliTimestamp();
+                    } else if (key == 'n' or key == 'N') {
+                        ai_step_requested = true;
+                    } else if (!ai_autopilot_active) {
+                        if (handleGameplayKey(&state, key)) break;
+                    }
                 }
             } else if (esc_state == 1) {
                 esc_state = if (key == '[') 2 else 0;
             } else {
                 esc_state = 0;
-                if (key == 'D') {
-                    state.tryMoveHorizontal(-1);
-                } else if (key == 'C') {
-                    state.tryMoveHorizontal(1);
-                } else if (key == 'A') {
-                    state.tryRotateCW();
-                } else if (key == 'B') {
-                    // Arrow-down accelerates descent via immediate gravity tick.
-                    _ = state.tickGravity();
+                if (!ai_autopilot_active) {
+                    if (key == 'D') {
+                        state.tryMoveHorizontal(-1);
+                    } else if (key == 'C') {
+                        state.tryMoveHorizontal(1);
+                    } else if (key == 'A') {
+                        state.tryRotateCW();
+                    } else if (key == 'B') {
+                        // Arrow-down accelerates descent via immediate gravity tick.
+                        _ = state.tickGravity();
+                    }
                 }
             }
         }
 
-        // 2. GRAVITY TICKS
+        // 2. AI STEP
         const current_time = std.time.milliTimestamp();
-        if (current_time - last_gravity_tick > gravity_interval_ms) {
-            last_gravity_tick = current_time;
-            _ = state.tickGravity();
+        var ai_moved = false;
+        if (ai_autopilot_active or ai_step_requested) {
+            const ai_ready = ai_step_requested or (current_time - last_ai_tick >= AI_STEP_INTERVAL_MS);
+            if (ai_ready) {
+                if (ai_autopilot_active) {
+                    last_ai_tick = current_time;
+                }
+                ai_step_requested = false;
+                runAiMove(&state);
+                ai_moved = true;
+            }
         }
 
-        // 3. RENDER FRAME
+        // 3. GRAVITY TICKS
+        if (!ai_autopilot_active and !ai_moved) {
+            if (current_time - last_gravity_tick > gravity_interval_ms) {
+                last_gravity_tick = current_time;
+                _ = state.tickGravity();
+            }
+        }
+
+        // 4. RENDER FRAME
         try render(&state);
 
         // Sleep for 16ms (~60 FPS) to prevent the CPU loop from maxing out at 100%
