@@ -1,3 +1,4 @@
+const std = @import("std");
 const game_mod = @import("../engine/game.zig");
 const GameState = game_mod.GameState;
 const Weights = game_mod.Weights;
@@ -7,6 +8,25 @@ pub const DEFAULT_WEIGHTS = Weights{
     .w_holes = -3.0,
     .w_bumpiness = -0.2,
 };
+
+//weights will automatically be parsed from data/weights.json
+//if weights.json doesnt exist, app will fail
+pub var TRAINED_WEIGHTS: Weights = Weights{
+    .w_aggregate = 0,
+    .w_holes = 0,
+    .w_bumpiness = 0,
+};
+
+pub fn loadTrainedWeights() !void {
+    const allocator = std.heap.page_allocator;
+    const data = try std.fs.cwd().readFileAlloc(allocator, "data/weights.json", 65536);
+    defer allocator.free(data);
+
+    const parsed = try std.json.parseFromSlice(Weights, allocator, data, .{});
+    defer parsed.deinit();
+
+    TRAINED_WEIGHTS = parsed.value;
+}
 
 pub fn score(state: *const GameState, weights: *const Weights) f32 {
     return state.evaluate(weights);
