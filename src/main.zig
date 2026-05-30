@@ -192,7 +192,7 @@ fn render(state: *const GameState) !void {
 }
 
 fn runAiMove(state: *GameState) void {
-    const move = expectimax.bestMoveWithOptions(state, &heuristics.DEFAULT_WEIGHTS, .{
+    const move = expectimax.bestMoveWithOptions(state, &heuristics.TRAINED_WEIGHTS, .{
         .depth = AI_DEPTH,
         .beam_width = AI_BEAM_WIDTH,
     });
@@ -237,7 +237,10 @@ pub fn main() !void {
     defer disableRawMode(orig_termios); // Ensure terminal resets even if game crashes
 
     // Initialize deterministic game state
-    var state = GameState.init(8241904821);
+    var state = GameState.init(42);
+
+    // Load trained weights from data/weights.json (optional)
+    try heuristics.loadTrainedWeights();
 
     var last_gravity_tick = std.time.milliTimestamp();
     const gravity_interval_ms: i64 = 500; // Piece falls every half second
