@@ -78,6 +78,12 @@ Real-time gameplay loop for terminal play.
 - Linux or WSL2
 - Zig 0.15.2
 
+Additional libraries required for the raylib renderer on Linux:
+
+```bash
+sudo apt install libwayland-dev wayland-protocols libxkbcommon-dev libegl1-mesa-dev
+```
+
 Version pinning matters for compiler behavior and reproducible builds.
 
 ## Getting Started
@@ -111,6 +117,19 @@ zig build
 
 ```bash
 zig build run
+```
+
+Renderer and tooling shortcuts
+
+```bash
+# Run the raylib GUI renderer
+zig build run
+
+# Start the genetic trainer (headless)
+zig build train
+
+# Run the terminal AI movement/debug harness
+zig run src/main.zig
 ```
 
 ## Development Workflow
