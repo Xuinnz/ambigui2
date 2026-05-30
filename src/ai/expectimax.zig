@@ -14,6 +14,8 @@ pub const SearchOptions = struct {
 const GAME_OVER_SCORE: f32 = -1.0e9;
 const LINE_CLEAR_REWARD: f32 = 1.0;
 const SHAPE_NONE: u64 = 7;
+//false when training, true for live env
+const tt_toggle: bool = false;
 
 const NodeKind = enum(u8) { max, chance };
 
@@ -90,6 +92,8 @@ pub fn bestMoveWithOptions(state: *const GameState, weights: *const Weights, opt
 }
 
 pub fn resetTranspositionTable() void {
+    if (!tt_toggle) return;
+
     tt_generation +%= 1;
     if (tt_generation == 0) {
         var i: usize = 0;
@@ -214,6 +218,8 @@ fn mix64(seed: u64) u64 {
 }
 
 fn ttProbe(key: u64) ?f32 {
+    if (!tt_toggle) return null;
+
     const start: usize = @as(usize, @intCast(key)) & TT_MASK;
     var i: usize = 0;
     while (i < TT_PROBE_LIMIT) : (i += 1) {
@@ -226,6 +232,8 @@ fn ttProbe(key: u64) ?f32 {
 }
 
 fn ttStore(key: u64, value: f32) void {
+    if (!tt_toggle) return;
+
     const start: usize = @as(usize, @intCast(key)) & TT_MASK;
     var i: usize = 0;
     while (i < TT_PROBE_LIMIT) : (i += 1) {
