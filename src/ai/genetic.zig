@@ -38,25 +38,26 @@ pub fn main() !void {
     try writeWeightsJson("data/weights.json", best);
 }
 
-// fn defaultConfig() TrainerConfig {
-//     return .{
-//         .population_size = 100,
-//         .generations = 100,
-//         .games_per_candidate = 5,
-//         .tournament_size = 4,
-//         .elite_count = 4,
-//         .max_moves = 2000,
-//         .thread_count = 11,
-//         .mutation_rate = 0.2,
-//         .mutation_scale = 0.5,
-//         .weight_min = -5.0,
-//         .weight_max = 0.0,
-//         .search_depth = 3,
-//         .search_beam_width = 5,
-//         .seed = 0xA5A5_1EE7_F00D_BA5E,
-//     };
-// }
 fn defaultConfig() TrainerConfig {
+    return .{
+        .population_size = 100,
+        .generations = 100,
+        .games_per_candidate = 10,
+        .tournament_size = 4,
+        .elite_count = 4,
+        .max_moves = 2000,
+        .thread_count = 11,
+        .mutation_rate = 0.2,
+        .mutation_scale = 0.5,
+        .weight_min = -5.0,
+        .weight_max = 0.0,
+        .search_depth = 3,
+        .search_beam_width = 10,
+        .seed = 0xA5A5_1EE7_F00D_BA5E,
+    };
+}
+
+fn smokeTestConfig() TrainerConfig {
     return .{
         .population_size = 8,
         .generations = 2,
@@ -64,7 +65,7 @@ fn defaultConfig() TrainerConfig {
         .tournament_size = 2,
         .elite_count = 1,
         .max_moves = 200,
-        .thread_count = 1,
+        .thread_count = 11,
         .mutation_rate = 0.2,
         .mutation_scale = 0.5,
         .weight_min = -5.0,
