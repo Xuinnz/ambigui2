@@ -5,6 +5,16 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // ── Configurable AI options ───────────────────────────────────────────────
+    const ai_seed = b.option(u64, "seed", "RNG seed for the game") orelse 444;
+    const ai_depth = b.option(u32, "depth", "Expectimax search depth") orelse 5;
+    const ai_beam = b.option(usize, "beam", "Beam search width") orelse 8;
+
+    const ai_options = b.addOptions();
+    ai_options.addOption(u64, "seed", ai_seed);
+    ai_options.addOption(u32, "ai_depth", ai_depth);
+    ai_options.addOption(usize, "ai_beam_width", ai_beam);
+
     const raylib_dep = b.dependency("raylib_zig", .{
         .target = target,
         .optimize = optimize,
@@ -18,10 +28,11 @@ pub fn build(b: *std.Build) !void {
         .name = "ambigui2",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/renderer_main.zig"),
-            .optimize = optimize,
+            .optimize = .ReleaseFast,
             .target = target,
         }),
     });
+    exe.root_module.addOptions("config", ai_options);
     exe.linkLibrary(raylib_artifact);
     exe.root_module.addImport("raylib", raylib);
     b.installArtifact(exe);
@@ -30,7 +41,7 @@ pub fn build(b: *std.Build) !void {
     const run_step = b.step("run", "Run the game");
     run_step.dependOn(&run_cmd.step);
 
-    // Training executable — always ReleaseFast
+    // Training executable
     const train_exe = b.addExecutable(.{
         .name = "train",
         .root_module = b.createModule(.{
@@ -56,4 +67,35 @@ pub fn build(b: *std.Build) !void {
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_tests.step);
+
+    // Demo
+    const demo = b.addExecutable(.{
+        .name = "demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+        }),
+    });
+    demo.root_module.addOptions("config", ai_options);
+    b.installArtifact(demo);
+
+    const demo_cmd = b.addRunArtifact(demo);
+    const demo_step = b.step("demo", "Run terminal demo");
+    demo_step.dependOn(&demo_cmd.step);
+
+    // Benchmark
+    const bench_exe = b.addExecutable(.{
+        .name = "benchmark",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/benchmark.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+        }),
+    });
+    bench_exe.root_module.addOptions("config", ai_options);
+    b.installArtifact(bench_exe);
+    const bench_cmd = b.addRunArtifact(bench_exe);
+    const bench_step = b.step("bench", "Benchmark AI across seeds");
+    bench_step.dependOn(&bench_cmd.step);
 }
