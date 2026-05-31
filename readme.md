@@ -28,7 +28,7 @@ Board and piece operations are designed around compact integer bitboards to enab
 
 The AI is designed for uncertainty-aware planning through expectimax and chance-node evaluation, with strict runtime budgeting for real-time play.
 
-## Target Feature Set
+## Features
 
 ### Engine
 
@@ -113,22 +113,49 @@ Expected output:
 zig build
 ```
 
-### 4) Run (After Runtime Entry Is Wired)
+### 4) Run (build targets provided by `build.zig`)
+
+This project exposes several build steps via `zig build` defined in [build.zig](build.zig):
+
+- `run` — GUI renderer executable (raylib):
 
 ```bash
 zig build run
 ```
 
-Renderer and tooling shortcuts
+- `train` — headless genetic trainer:
 
 ```bash
-# Run the raylib GUI renderer
-zig build run
-
-# Start the genetic trainer (headless)
 zig build train
+```
 
-# Run the terminal AI movement/debug harness
+- `demo` — terminal-mode demo (same codepath as `src/main.zig`):
+
+```bash
+zig build demo
+```
+
+- `test` — run unit tests:
+
+```bash
+zig build test
+```
+
+- `bench` — benchmark AI across seeds:
+
+```bash
+zig build bench
+```
+
+You can pass configurable AI options from the command line (see `build.zig`) using `-D` flags. Example:
+
+```bash
+zig build run -Dseed=12345 -Dai_depth=3 -Dai_beam_width=5
+```
+
+If you prefer to run the terminal harness directly without the build step, the entrypoint is `src/main.zig`:
+
+```bash
 zig run src/main.zig
 ```
 
@@ -160,14 +187,6 @@ Planned testing layers:
 - Determinism tests: seed-to-sequence reproducibility
 - AI regression tests: fixed-state move quality and latency caps
 
-## Roadmap
-
-1. Data structures and tetromino encoding (done)
-2. Core physics and collision system (done)
-3. Dual-state collapse and line clear rules (done)
-4. Terminal rendering and interactive loop (done)
-5. Expectimax agent and genetic training pipeline (next)
-
 ## Contributing
 
 Contributions are welcome. For substantial changes, open an issue first to align on scope, performance targets, and testing expectations.
@@ -180,7 +199,7 @@ When submitting a pull request:
 
 ## License
 
-MIT (intended). Add a `LICENSE` file at repository root to finalize licensing terms.
+This repository includes a `LICENSE` file at the project root. The project is released under the MIT License.
 
 ## Academic Context
 
