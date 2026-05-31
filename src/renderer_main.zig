@@ -7,21 +7,23 @@ const ai_worker_mod = @import("ai/worker.zig");
 const GameState = game_mod.GameState;
 const AiWorker = ai_worker_mod.AiWorker;
 const heuristics = @import("ai/heuristics.zig");
+const config = @import("config");
 
-const AI_DEPTH: u32 = 3;
-const AI_BEAM_WIDTH: usize = 5;
 const AI_STEP_MS: i64 = 0; // minimum time between moves (visual pacing)
 const AI_RESTART_MS: i64 = 2000;
 const GRAVITY_MS: i64 = 500;
 const SOFT_DROP_MS: i64 = 60;
+const SEED: u64 = config.seed;
+const AI_DEPTH: u32 = config.ai_depth;
+const AI_BEAM_WIDTH: usize = config.ai_beam_width;
 
 pub fn main() !void {
     rl.initWindow(renderer.WIN_W, renderer.WIN_H, "ambigui2");
     defer rl.closeWindow();
     rl.setTargetFPS(60);
 
-    var player = GameState.init(42);
-    var ai = GameState.init(42);
+    var player = GameState.init(SEED);
+    var ai = GameState.init(SEED);
 
     // Load trained weights if present
     try heuristics.loadTrainedWeights();

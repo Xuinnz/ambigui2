@@ -7,11 +7,13 @@ const heuristics = @import("ai/heuristics.zig");
 const Board = @import("engine/board.zig").Board;
 const piece_mod = @import("engine/piece.zig");
 const Piece = piece_mod.Piece;
+const config = @import("config");
 
 //depth = 5, width = 8 for presentation
 //depth 3, width = 5 for training
-const AI_DEPTH: u32 = 3;
-const AI_BEAM_WIDTH: usize = 5;
+const SEED: u64 = config.seed;
+const AI_DEPTH: u32 = config.ai_depth;
+const AI_BEAM_WIDTH: usize = config.ai_beam_width;
 const AI_STEP_INTERVAL_MS: i64 = 0;
 
 // --- TERMINAL MAGIC ---
@@ -237,7 +239,7 @@ pub fn main() !void {
     defer disableRawMode(orig_termios); // Ensure terminal resets even if game crashes
 
     // Initialize deterministic game state
-    var state = GameState.init(42);
+    var state = GameState.init(SEED);
 
     // Load trained weights from data/weights.json (optional)
     try heuristics.loadTrainedWeights();
