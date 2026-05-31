@@ -43,13 +43,13 @@ fn defaultConfig() TrainerConfig {
         .population_size = 100,
         .generations = 100,
         .games_per_candidate = 10,
-        .tournament_size = 4,
+        .tournament_size = 6,
         .elite_count = 4,
         .max_moves = 2000,
         .thread_count = 11,
-        .mutation_rate = 0.2,
+        .mutation_rate = 0.3,
         .mutation_scale = 0.5,
-        .weight_min = -5.0,
+        .weight_min = -15.0,
         .weight_max = 0.0,
         .search_depth = 3,
         .search_beam_width = 10,
@@ -96,8 +96,10 @@ pub fn runTrainer(allocator: std.mem.Allocator, config: TrainerConfig) !Weights 
 
     initPopulation(population, &random, config);
 
-    var best_overall = population[0];
-    best_overall.fitness = -1.0;
+    var best_overall = Candidate{
+        .weights = heuristics.DEFAULT_WEIGHTS,
+        .fitness = -1.0,
+    };
 
     var gen: usize = 0;
     while (gen < config.generations) : (gen += 1) {
@@ -116,7 +118,7 @@ pub fn runTrainer(allocator: std.mem.Allocator, config: TrainerConfig) !Weights 
         sortCandidates(population);
         const avg = total_fitness / @as(f32, @floatFromInt(population.len));
         std.debug.print(
-            "gen {d} best {d:.2} avg {d:.2} weights({d:.3},{d:.3},{d:.3})\n",
+            "gen {d} best {d:.2} avg {d:.2} weights({d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3})\n",
             .{
                 gen,
                 population[0].fitness,
@@ -124,6 +126,9 @@ pub fn runTrainer(allocator: std.mem.Allocator, config: TrainerConfig) !Weights 
                 population[0].weights.w_aggregate,
                 population[0].weights.w_holes,
                 population[0].weights.w_bumpiness,
+                population[0].weights.w_wells,
+                population[0].weights.w_row_transitions,
+                population[0].weights.w_col_transitions,
             },
         );
 
@@ -142,6 +147,19 @@ pub fn runTrainer(allocator: std.mem.Allocator, config: TrainerConfig) !Weights 
 
         std.mem.swap([]Candidate, &population, &next_population);
     }
+
+    std.debug.print(
+        "FINAL best_overall: fitness={d:.2} weights({d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3})\n",
+        .{
+            best_overall.fitness,
+            best_overall.weights.w_aggregate,
+            best_overall.weights.w_holes,
+            best_overall.weights.w_bumpiness,
+            best_overall.weights.w_wells,
+            best_overall.weights.w_row_transitions,
+            best_overall.weights.w_col_transitions,
+        },
+    );
 
     return best_overall.weights;
 }
@@ -251,6 +269,9 @@ fn crossover(a: Weights, b: Weights, random: *std.Random) Weights {
         .w_aggregate = pickWeight(random, a.w_aggregate, b.w_aggregate),
         .w_holes = pickWeight(random, a.w_holes, b.w_holes),
         .w_bumpiness = pickWeight(random, a.w_bumpiness, b.w_bumpiness),
+        .w_wells = pickWeight(random, a.w_wells, b.w_wells),
+        .w_row_transitions = pickWeight(random, a.w_row_transitions, b.w_row_transitions),
+        .w_col_transitions = pickWeight(random, a.w_col_transitions, b.w_col_transitions),
     };
 }
 
@@ -262,6 +283,9 @@ fn mutate(weights: *Weights, random: *std.Random, config: TrainerConfig) void {
     weights.w_aggregate = mutateWeight(weights.w_aggregate, random, config);
     weights.w_holes = mutateWeight(weights.w_holes, random, config);
     weights.w_bumpiness = mutateWeight(weights.w_bumpiness, random, config);
+    weights.w_wells = mutateWeight(weights.w_wells, random, config);
+    weights.w_row_transitions = mutateWeight(weights.w_row_transitions, random, config);
+    weights.w_col_transitions = mutateWeight(weights.w_col_transitions, random, config);
 }
 
 fn mutateWeight(value: f32, random: *std.Random, config: TrainerConfig) f32 {
@@ -278,6 +302,9 @@ fn randomWeights(random: *std.Random, config: TrainerConfig) Weights {
         .w_aggregate = randomWeight(random, config),
         .w_holes = randomWeight(random, config),
         .w_bumpiness = randomWeight(random, config),
+        .w_wells = randomWeight(random, config),
+        .w_row_transitions = randomWeight(random, config),
+        .w_col_transitions = randomWeight(random, config),
     };
 }
 
@@ -291,38 +318,48 @@ fn writeWeightsJson(path: []const u8, weights: Weights) !void {
     var file = try std.fs.cwd().createFile(path, .{ .truncate = true });
     defer file.close();
 
-    var out_buf: [512]u8 = undefined;
+    var out_buf: [1024]u8 = undefined;
     var cursor: usize = 0;
-
-    // write prefix
-    const p1 = "{\"w_aggregate\": ";
-    @memcpy(out_buf[cursor .. cursor + p1.len], p1);
-    cursor += p1.len;
-
     var float_buf: [128]u8 = undefined;
-    const s_agg = try std.fmt.float.render(float_buf[0..], weights.w_aggregate, .{});
-    @memcpy(out_buf[cursor .. cursor + s_agg.len], s_agg);
-    cursor += s_agg.len;
 
-    const p2 = ", \"w_holes\": ";
-    @memcpy(out_buf[cursor .. cursor + p2.len], p2);
-    cursor += p2.len;
+    const fields = [_]struct { label: []const u8, value: f32 }{
+        .{ .label = "w_aggregate", .value = weights.w_aggregate },
+        .{ .label = "w_holes", .value = weights.w_holes },
+        .{ .label = "w_bumpiness", .value = weights.w_bumpiness },
+        .{ .label = "w_wells", .value = weights.w_wells },
+        .{ .label = "w_row_transitions", .value = weights.w_row_transitions },
+        .{ .label = "w_col_transitions", .value = weights.w_col_transitions },
+    };
 
-    const s_holes = try std.fmt.float.render(float_buf[0..], weights.w_holes, .{});
-    @memcpy(out_buf[cursor .. cursor + s_holes.len], s_holes);
-    cursor += s_holes.len;
+    out_buf[cursor] = '{';
+    cursor += 1;
 
-    const p3 = ", \"w_bumpiness\": ";
-    @memcpy(out_buf[cursor .. cursor + p3.len], p3);
-    cursor += p3.len;
+    for (fields, 0..) |field, i| {
+        // key
+        out_buf[cursor] = '"';
+        cursor += 1;
+        @memcpy(out_buf[cursor .. cursor + field.label.len], field.label);
+        cursor += field.label.len;
+        const sep = "\": ";
+        @memcpy(out_buf[cursor .. cursor + sep.len], sep);
+        cursor += sep.len;
 
-    const s_bump = try std.fmt.float.render(float_buf[0..], weights.w_bumpiness, .{});
-    @memcpy(out_buf[cursor .. cursor + s_bump.len], s_bump);
-    cursor += s_bump.len;
+        // value
+        const s = try std.fmt.float.render(float_buf[0..], field.value, .{});
+        @memcpy(out_buf[cursor .. cursor + s.len], s);
+        cursor += s.len;
 
-    const p4 = "}\n";
-    @memcpy(out_buf[cursor .. cursor + p4.len], p4);
-    cursor += p4.len;
+        // comma except last
+        if (i < fields.len - 1) {
+            const comma = ", ";
+            @memcpy(out_buf[cursor .. cursor + comma.len], comma);
+            cursor += comma.len;
+        }
+    }
+
+    const closing = "}\n";
+    @memcpy(out_buf[cursor .. cursor + closing.len], closing);
+    cursor += closing.len;
 
     try file.writeAll(out_buf[0..cursor]);
 }

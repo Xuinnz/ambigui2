@@ -5,8 +5,11 @@ const Weights = game_mod.Weights;
 
 pub const DEFAULT_WEIGHTS = Weights{
     .w_aggregate = -0.5,
-    .w_holes = -3.0,
-    .w_bumpiness = -0.2,
+    .w_holes = -7.9,
+    .w_bumpiness = -1.8,
+    .w_wells = -3.4,
+    .w_row_transitions = -3.4,
+    .w_col_transitions = -5.2,
 };
 
 //weights will automatically be parsed from data/weights.json
@@ -15,6 +18,9 @@ pub var TRAINED_WEIGHTS: Weights = Weights{
     .w_aggregate = 0,
     .w_holes = 0,
     .w_bumpiness = 0,
+    .w_wells = 0,
+    .w_row_transitions = 0,
+    .w_col_transitions = 0,
 };
 
 pub fn loadTrainedWeights() !void {
