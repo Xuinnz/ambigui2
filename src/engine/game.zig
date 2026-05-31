@@ -80,6 +80,9 @@ pub const EvalCache = struct {
     hole_count: u16,
     bumpiness: u16,
     aggregate_height: u16,
+    wells: u16,
+    row_transitions: u16,
+    col_transitions: u16,
 
     pub fn init() EvalCache {
         return .{
@@ -87,6 +90,9 @@ pub const EvalCache = struct {
             .hole_count = 0,
             .bumpiness = 0,
             .aggregate_height = 0,
+            .wells = 0,
+            .row_transitions = 0,
+            .col_transitions = 0,
         };
     }
 
@@ -94,7 +100,11 @@ pub const EvalCache = struct {
         self.hole_count = 0;
         self.bumpiness = 0;
         self.aggregate_height = 0;
+        self.wells = 0;
+        self.row_transitions = 0;
+        self.col_transitions = 0;
 
+        // Heights and holes
         var col: usize = 0;
         while (col < Board.WIDTH) : (col += 1) {
             const col_mask: u16 = @as(u16, 1) << @as(u4, @intCast(col));
@@ -119,12 +129,56 @@ pub const EvalCache = struct {
             self.aggregate_height += @as(u16, height);
         }
 
+        // Bumpiness
         col = 0;
         while (col + 1 < Board.WIDTH) : (col += 1) {
             const left = @as(i16, self.col_heights[col]);
             const right = @as(i16, self.col_heights[col + 1]);
-            const diff = left - right;
-            self.bumpiness += @as(u16, @intCast(@abs(diff)));
+            self.bumpiness += @as(u16, @intCast(@abs(left - right)));
+        }
+
+        // Wells
+        col = 0;
+        while (col < Board.WIDTH) : (col += 1) {
+            const left_h: i16 = if (col == 0)
+                @as(i16, Board.HEIGHT)
+            else
+                @as(i16, self.col_heights[col - 1]);
+            const right_h: i16 = if (col == Board.WIDTH - 1)
+                @as(i16, Board.HEIGHT)
+            else
+                @as(i16, self.col_heights[col + 1]);
+            const h: i16 = @as(i16, self.col_heights[col]);
+            const well_depth = @min(left_h, right_h) - h;
+            if (well_depth > 0) self.wells += @as(u16, @intCast(well_depth));
+        }
+
+        // Row transitions
+        var row: usize = 0;
+        while (row < Board.HEIGHT) : (row += 1) {
+            const r = board.grid[row] & Board.ROW_MASK;
+            var prev_filled = true; // left wall = filled
+            col = 0;
+            while (col < Board.WIDTH) : (col += 1) {
+                const filled = (r & (@as(u16, 1) << @as(u4, @intCast(col)))) != 0;
+                if (filled != prev_filled) self.row_transitions += 1;
+                prev_filled = filled;
+            }
+            if (!prev_filled) self.row_transitions += 1; // right wall
+        }
+
+        // Column transitions
+        col = 0;
+        while (col < Board.WIDTH) : (col += 1) {
+            const col_mask: u16 = @as(u16, 1) << @as(u4, @intCast(col));
+            var prev_filled = true; // floor = filled
+            var r: usize = Board.HEIGHT;
+            while (r > 0) {
+                r -= 1;
+                const filled = (board.grid[r] & col_mask) != 0;
+                if (filled != prev_filled) self.col_transitions += 1;
+                prev_filled = filled;
+            }
         }
     }
 };
@@ -133,6 +187,9 @@ pub const Weights = struct {
     w_aggregate: f32,
     w_holes: f32,
     w_bumpiness: f32,
+    w_wells: f32,
+    w_row_transitions: f32,
+    w_col_transitions: f32,
 };
 
 const JLSTZ_KICKS_CW: [4][5]Kick = .{
@@ -363,10 +420,8 @@ pub const GameState = struct {
     }
 
     pub fn evaluate(self: *const GameState, weights: *const Weights) f32 {
-        const cache = &self.eval_cache;
-        return weights.w_aggregate * @as(f32, @floatFromInt(cache.aggregate_height)) +
-            weights.w_holes * @as(f32, @floatFromInt(cache.hole_count)) +
-            weights.w_bumpiness * @as(f32, @floatFromInt(cache.bumpiness));
+        const c = &self.eval_cache;
+        return weights.w_aggregate * @as(f32, @floatFromInt(c.aggregate_height)) + weights.w_holes * @as(f32, @floatFromInt(c.hole_count)) + weights.w_bumpiness * @as(f32, @floatFromInt(c.bumpiness)) + weights.w_wells * @as(f32, @floatFromInt(c.wells)) + weights.w_row_transitions * @as(f32, @floatFromInt(c.row_transitions)) + weights.w_col_transitions * @as(f32, @floatFromInt(c.col_transitions));
     }
 
     /// Enumerates legal placements for the current quantum piece.
