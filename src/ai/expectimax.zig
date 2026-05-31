@@ -104,9 +104,9 @@ pub fn resetTranspositionTable() void {
     }
 }
 
-fn maxNode(state: *const GameState, weights: *const Weights, depth: u32, beam_width: usize) f32 {
+fn maxNode(state: *const GameState, weights: *const Weights, depth: u32, beam_width: usize, prev_lines: u32) f32 {
     if (state.game_over) return GAME_OVER_SCORE;
-    if (depth == 0) return scoreLeaf(state, weights);
+    if (depth == 0) return scoreLeaf(state, weights, prev_lines);
 
     const key = stateKey(state, depth, .max);
     if (ttProbe(key)) |cached| return cached;
@@ -158,24 +158,25 @@ fn chanceNode(state: *const GameState, move: *const Move, weights: *const Weight
 
     const prob_a = state.current_piece.prob_a;
     const prob_b = 1.0 - prob_a;
+    const prev_lines = state.lines_cleared; // capture BEFORE applying move
 
     var branch_a = state.clone();
     branch_a.applyMoveDeterministic(move, true, true);
     const score_a = if (branch_a.game_over)
         GAME_OVER_SCORE
     else if (depth == 0)
-        scoreLeaf(&branch_a, weights)
+        scoreLeaf(&branch_a, weights, prev_lines)
     else
-        maxNode(&branch_a, weights, depth - 1, beam_width);
+        maxNode(&branch_a, weights, depth - 1, beam_width, prev_lines);
 
     var branch_b = state.clone();
     branch_b.applyMoveDeterministic(move, false, true);
     const score_b = if (branch_b.game_over)
         GAME_OVER_SCORE
     else if (depth == 0)
-        scoreLeaf(&branch_b, weights)
+        scoreLeaf(&branch_b, weights, prev_lines)
     else
-        maxNode(&branch_b, weights, depth - 1, beam_width);
+        maxNode(&branch_b, weights, depth - 1, beam_width, prev_lines);
 
     return (prob_a * score_a) + (prob_b * score_b);
 }
@@ -254,21 +255,23 @@ fn ttStore(key: u64, value: f32) void {
 fn estimateMoveValue(state: *const GameState, move: *const Move, weights: *const Weights) f32 {
     const prob_a = state.current_piece.prob_a;
     const prob_b = 1.0 - prob_a;
+    const prev_lines = state.lines_cleared; // same fix here
 
     var branch_a = state.clone();
     branch_a.applyMoveDeterministic(move, true, true);
-    const score_a = if (branch_a.game_over) GAME_OVER_SCORE else scoreLeaf(&branch_a, weights);
+    const score_a = if (branch_a.game_over) GAME_OVER_SCORE else scoreLeaf(&branch_a, weights, prev_lines);
 
     var branch_b = state.clone();
     branch_b.applyMoveDeterministic(move, false, true);
-    const score_b = if (branch_b.game_over) GAME_OVER_SCORE else scoreLeaf(&branch_b, weights);
+    const score_b = if (branch_b.game_over) GAME_OVER_SCORE else scoreLeaf(&branch_b, weights, prev_lines);
 
     return (prob_a * score_a) + (prob_b * score_b);
 }
 
-fn scoreLeaf(state: *const GameState, weights: *const Weights) f32 {
+fn scoreLeaf(state: *const GameState, weights: *const Weights, prev_lines: u32) f32 {
     const base = heuristics.score(state, weights);
-    const reward = LINE_CLEAR_REWARD * @as(f32, @floatFromInt(state.lines_cleared));
+    const delta = state.lines_cleared - prev_lines;
+    const reward = LINE_CLEAR_REWARD * @as(f32, @floatFromInt(delta));
     return base + reward;
 }
 
