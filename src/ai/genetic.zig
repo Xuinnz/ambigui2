@@ -209,7 +209,6 @@ fn evaluateRange(population: []Candidate, config: TrainerConfig, seeds: []const 
 }
 
 fn evaluateCandidate(weights: Weights, config: TrainerConfig, seeds: []const u64) f32 {
-    expectimax.resetTranspositionTable();
     var total: u64 = 0;
     for (seeds) |seed| {
         total += playGame(weights, config, seed);
