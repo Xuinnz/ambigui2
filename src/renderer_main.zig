@@ -9,8 +9,9 @@ const AiWorker = ai_worker_mod.AiWorker;
 const heuristics = @import("ai/heuristics.zig");
 const config = @import("config");
 
-const AI_STEP_MS: i64 = 0; // minimum time between moves (visual pacing)
+const AI_STEP_MS: i64 = 1000; // minimum time between moves (visual pacing)
 const AI_RESTART_MS: i64 = 2000;
+const AI_GRAVITY_MS: i64 = 500;
 const GRAVITY_MS: i64 = 500;
 const SOFT_DROP_MS: i64 = 60;
 const SEED: u64 = config.seed;
@@ -40,6 +41,7 @@ pub fn main() !void {
     worker.post(&ai);
 
     var last_gravity: i64 = std.time.milliTimestamp();
+    var last_ai_gravity: i64 = std.time.milliTimestamp();
     var last_ai_step: i64 = std.time.milliTimestamp();
     var ai_death_time: i64 = 0;
 
@@ -68,6 +70,13 @@ pub fn main() !void {
             last_gravity = now;
         }
 
+        // ── AI gravity ──────────────────────────────────────────────────
+        if (!ai.game_over and now - last_ai_gravity >= AI_GRAVITY_MS) {
+            _ = ai.tickGravity();
+            last_ai_gravity = now;
+            worker.post(&ai);
+        }
+
         // ── AI step — never blocks render ─────────────────────────────────
         if (!ai.game_over) {
             // Only consume result if minimum display time has passed
@@ -76,6 +85,7 @@ pub fn main() !void {
                     last_ai_step = now;
                     if (maybe_move) |move| {
                         ai.applyMove(&move);
+                        last_ai_gravity = now;
                         worker.post(&ai); // start next computation immediately
                     } else {
                         ai.game_over = true;
@@ -88,6 +98,7 @@ pub fn main() !void {
             if (now - ai_death_time >= AI_RESTART_MS) {
                 ai = GameState.init(@as(u64, @intCast(now)));
                 last_ai_step = now;
+                last_ai_gravity = now;
                 ai_death_time = 0;
                 worker.post(&ai);
             }
