@@ -43,6 +43,7 @@ const COL_LABEL = rl.Color{ .r = 100, .g = 100, .b = 100, .a = 255 };
 const COL_WHITE = rl.Color{ .r = 240, .g = 240, .b = 240, .a = 255 };
 const COL_RED = rl.Color{ .r = 220, .g = 50, .b = 50, .a = 255 };
 const COL_DIVIDER = rl.Color{ .r = 45, .g = 45, .b = 45, .a = 255 };
+const COL_BLACK = rl.Color.black;
 const COL_BTN = rl.Color{ .r = 55, .g = 55, .b = 55, .a = 255 };
 const COL_BTN_HOVER = rl.Color{ .r = 75, .g = 75, .b = 75, .a = 255 };
 
@@ -59,45 +60,217 @@ var current_ai_config: AiConfig = .{
 };
 
 const UiScreen = enum {
-    LandingPage,
     DifficultySelect,
     InGame,
 };
 
-var ui_screen: UiScreen = .LandingPage;
+var ui_screen: UiScreen = .DifficultySelect;
 
-const MENU_BTN_W: i32 = 200;
-const MENU_BTN_H: i32 = 44;
-const MENU_BTN_GAP: i32 = 16;
+const DIFFICULTY_ASSET: [:0]const u8 = "assets/landing_page/difficulty_page.png";
+const VS_AI_FRAMES_DIR: []const u8 = "assets/vs_ai/frames";
+const GAME_BOARD_ASSET: [:0]const u8 = "assets/vs_ai/game_board.png";
+const BG_FRAME_DURATION: f32 = 1.0 / 24.0;
 
-const LANDING_ASSET: [:0]const u8 = "assets/landing_page/resized_main_page.png";
-var landing_texture: ?rl.Texture2D = null;
-var landing_assets_inited: bool = false;
+var difficulty_texture: ?rl.Texture2D = null;
+var difficulty_assets_inited: bool = false;
 
-// Normalized hit box on main_page.png (3840×2160) for the "Player vs AI" pill
-const PVP_HIT_X_NORM: f32 = 0.40;
-const PVP_HIT_Y_NORM: f32 = 0.685;
-const PVP_HIT_W_NORM: f32 = 0.20;
-const PVP_HIT_H_NORM: f32 = 0.08;
+var game_board_texture: ?rl.Texture2D = null;
+var game_board_inited: bool = false;
 
-fn initLandingAssets() void {
-    if (landing_assets_inited) return;
-    landing_assets_inited = true;
-    landing_texture = rl.loadTexture(LANDING_ASSET) catch null;
-    if (landing_texture) |tex| {
+var bg_current_frame: u32 = 0;
+var bg_frame_timer: f32 = 0.0;
+var bg_textures: []rl.Texture2D = &.{};
+var bg_anim_inited: bool = false;
+const bg_gpa = std.heap.page_allocator;
+
+const FrameFile = struct {
+    num: u32,
+    name: []const u8,
+};
+
+fn isFrameAsset(name: []const u8) bool {
+    if (!std.mem.startsWith(u8, name, "frame_")) return false;
+    if (std.mem.indexOf(u8, name, ":Zone.Identifier") != null) return false;
+    return std.mem.endsWith(u8, name, ".png") or std.mem.endsWith(u8, name, ".gif");
+}
+
+fn parseFrameNumber(name: []const u8) ?u32 {
+    const prefix = "frame_";
+    if (!std.mem.startsWith(u8, name, prefix)) return null;
+    var i: usize = prefix.len;
+    if (i >= name.len or name[i] < '0' or name[i] > '9') return null;
+    var num: u32 = 0;
+    while (i < name.len) : (i += 1) {
+        const c = name[i];
+        if (c < '0' or c > '9') break;
+        num = num * 10 + @as(u32, c - '0');
+    }
+    return if (i > prefix.len) num else null;
+}
+
+fn initDifficultyAssets() void {
+    if (difficulty_assets_inited) return;
+    difficulty_assets_inited = true;
+    difficulty_texture = rl.loadTexture(DIFFICULTY_ASSET) catch null;
+    if (difficulty_texture) |tex| {
         rl.setTextureFilter(tex, .bilinear);
     }
 }
 
-fn pvpHitRect() rl.Rectangle {
+fn initGameBoardAsset() void {
+    if (game_board_inited) return;
+    game_board_inited = true;
+    game_board_texture = rl.loadTexture(GAME_BOARD_ASSET) catch null;
+    if (game_board_texture) |tex| {
+        rl.setTextureFilter(tex, .bilinear);
+    }
+}
+
+fn drawBoardBackgroundAt(board_x: i32) void {
+    const tex = game_board_texture orelse return;
+    const src = rl.Rectangle{
+        .x = 0,
+        .y = 0,
+        .width = @floatFromInt(tex.width),
+        .height = @floatFromInt(tex.height),
+    };
+    const dest = rl.Rectangle{
+        .x = @floatFromInt(board_x),
+        .y = @floatFromInt(BOARD_Y),
+        .width = @floatFromInt(BOARD_W),
+        .height = @floatFromInt(BOARD_H),
+    };
+    rl.drawTexturePro(tex, src, dest, .{ .x = 0, .y = 0 }, 0, rl.Color.white);
+}
+
+fn drawInGameBoardOverlay() void {
+    drawBoardBackgroundAt(L_BOARD_X);
+    drawBoardBackgroundAt(R_BOARD_X);
+}
+
+fn scaledHitRect(x_n: f32, y_n: f32, w_n: f32, h_n: f32) rl.Rectangle {
     const w = @as(f32, @floatFromInt(WIN_W));
     const h = @as(f32, @floatFromInt(WIN_H));
     return .{
-        .x = w * PVP_HIT_X_NORM,
-        .y = h * PVP_HIT_Y_NORM,
-        .width = w * PVP_HIT_W_NORM,
-        .height = h * PVP_HIT_H_NORM,
+        .x = w * x_n,
+        .y = h * y_n,
+        .width = w * w_n,
+        .height = h * h_n,
     };
+}
+
+// Normalized hit boxes on difficulty_page.png (1280×720) for Easy / Medium / Hard pills
+const DIFF_BTN_W_NORM: f32 = 0.20;
+const DIFF_BTN_H_NORM: f32 = 0.08;
+const DIFF_BTN_X_NORM: f32 = 0.40;
+const EASY_HIT_Y_NORM: f32 = 0.54;
+const MED_HIT_Y_NORM: f32 = 0.64;
+const HARD_HIT_Y_NORM: f32 = 0.74;
+
+fn initInGameBgAnim() void {
+    if (bg_anim_inited) return;
+
+    var dir = std.fs.cwd().openDir(VS_AI_FRAMES_DIR, .{ .iterate = true }) catch return;
+    defer dir.close();
+
+    var frame_files: std.ArrayList(FrameFile) = .empty;
+    defer {
+        for (frame_files.items) |entry| bg_gpa.free(entry.name);
+        frame_files.deinit(bg_gpa);
+    }
+
+    var it = dir.iterate();
+    while (it.next() catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (!isFrameAsset(entry.name)) continue;
+        const num = parseFrameNumber(entry.name) orelse continue;
+        const owned = bg_gpa.dupe(u8, entry.name) catch continue;
+        frame_files.append(bg_gpa, .{ .num = num, .name = owned }) catch {
+            bg_gpa.free(owned);
+            return;
+        };
+    }
+
+    if (frame_files.items.len == 0) return;
+
+    std.mem.sort(FrameFile, frame_files.items, {}, struct {
+        fn less(_: void, a: FrameFile, b: FrameFile) bool {
+            return a.num < b.num;
+        }
+    }.less);
+
+    var tex_list: std.ArrayList(rl.Texture2D) = .empty;
+    errdefer {
+        for (tex_list.items) |tex| rl.unloadTexture(tex);
+        tex_list.deinit(bg_gpa);
+    }
+
+    for (frame_files.items) |entry| {
+        const path = std.fmt.allocPrint(bg_gpa, "{s}/{s}", .{ VS_AI_FRAMES_DIR, entry.name }) catch break;
+        defer bg_gpa.free(path);
+        const path_z = bg_gpa.allocSentinel(u8, path.len, 0) catch break;
+        defer bg_gpa.free(path_z);
+        @memcpy(path_z, path);
+        const tex = rl.loadTexture(path_z) catch break;
+        rl.setTextureFilter(tex, .bilinear);
+        tex_list.append(bg_gpa, tex) catch {
+            rl.unloadTexture(tex);
+            break;
+        };
+    }
+
+    if (tex_list.items.len != frame_files.items.len) return;
+
+    bg_textures = tex_list.toOwnedSlice(bg_gpa) catch return;
+    bg_anim_inited = true;
+}
+
+fn updateInGameBgFrame() void {
+    if (bg_textures.len == 0) return;
+    bg_frame_timer += rl.getFrameTime();
+    const frame_count: u32 = @intCast(bg_textures.len);
+    while (bg_frame_timer >= BG_FRAME_DURATION) {
+        bg_frame_timer -= BG_FRAME_DURATION;
+        bg_current_frame = (bg_current_frame + 1) % frame_count;
+    }
+}
+
+fn drawInGameBgFrame() void {
+    rl.clearBackground(COL_BLACK);
+    if (bg_textures.len == 0) return;
+    const idx = @as(usize, @intCast(bg_current_frame));
+    if (idx >= bg_textures.len) return;
+
+    const tex = bg_textures[idx];
+    const src = rl.Rectangle{
+        .x = 0,
+        .y = 0,
+        .width = @floatFromInt(tex.width),
+        .height = @floatFromInt(tex.height),
+    };
+    const dest = rl.Rectangle{
+        .x = 0,
+        .y = 0,
+        .width = @floatFromInt(WIN_W),
+        .height = @floatFromInt(WIN_H),
+    };
+    rl.drawTexturePro(tex, src, dest, .{ .x = 0, .y = 0 }, 0, rl.Color.white);
+}
+
+fn drawUiTexture(tex: rl.Texture2D) void {
+    const src: rl.Rectangle = .{
+        .x = 0,
+        .y = 0,
+        .width = @floatFromInt(tex.width),
+        .height = @floatFromInt(tex.height),
+    };
+    const dest: rl.Rectangle = .{
+        .x = 0,
+        .y = 0,
+        .width = @floatFromInt(WIN_W),
+        .height = @floatFromInt(WIN_H),
+    };
+    rl.drawTexturePro(tex, src, dest, .{ .x = 0, .y = 0 }, 0, rl.Color.white);
 }
 
 fn shapeColor(shape: ShapeType) rl.Color {
@@ -211,22 +384,16 @@ fn drawPieceMini(piece: *const Piece, ox: i32, oy: i32, color: rl.Color) void {
 }
 
 // ── Per-board sections ────────────────────────────────────────────────────────
+// Locked cells only; game_board.png is the sole playfield background (see drawInGameBoardOverlay).
 fn drawBoard(layout: BoardLayout, state: *const GameState) void {
-    rl.drawRectangleLines(
-        layout.board_x - 1,
-        BOARD_Y - 1,
-        BOARD_W + 2,
-        BOARD_H + 2,
-        COL_BORDER,
-    );
-
     var row: usize = 0;
     while (row < Board.HEIGHT) : (row += 1) {
         var col: usize = 0;
         while (col < Board.WIDTH) : (col += 1) {
             const bit: u16 = @as(u16, 1) << @as(u4, @intCast(col));
             const locked = (state.board.grid[row] & bit) != 0;
-            cellAt(layout.board_x, @intCast(col), @intCast(row), if (locked) COL_LOCKED else COL_EMPTY);
+            if (!locked) continue;
+            cellAt(layout.board_x, @intCast(col), @intCast(row), COL_LOCKED);
         }
     }
 }
@@ -312,68 +479,16 @@ fn drawGameOverOverlay(layout: BoardLayout, comptime subtitle: [:0]const u8) voi
     rl.drawText(subtitle, layout.board_x + @divTrunc(BOARD_W - sw, 2), mid_y + 10, 14, COL_LABEL);
 }
 
-fn drawLandingPage() void {
-    initLandingAssets();
-    const tex = landing_texture orelse return;
-
-    const src: rl.Rectangle = .{
-        .x = 0,
-        .y = 0,
-        .width = @floatFromInt(tex.width),
-        .height = @floatFromInt(tex.height),
-    };
-    const dest: rl.Rectangle = .{
-        .x = 0,
-        .y = 0,
-        .width = @floatFromInt(WIN_W),
-        .height = @floatFromInt(WIN_H),
-    };
-    rl.drawTexturePro(tex, src, dest, .{ .x = 0, .y = 0 }, 0, rl.Color.white);
-
-    const btn = pvpHitRect();
-    const mouse = rl.getMousePosition();
-    if (rl.isMouseButtonPressed(rl.MouseButton.left) and rl.checkCollisionPointRec(mouse, btn)) {
-        ui_screen = .DifficultySelect;
-    }
-}
-
-fn menuButtonRect(center_y: i32) rl.Rectangle {
-    const x = @divTrunc(WIN_W - MENU_BTN_W, 2);
-    return .{
-        .x = @floatFromInt(x),
-        .y = @floatFromInt(center_y),
-        .width = @floatFromInt(MENU_BTN_W),
-        .height = @floatFromInt(MENU_BTN_H),
-    };
-}
-
-fn drawMenuButton(rect: rl.Rectangle, label: [:0]const u8) bool {
-    const mouse = rl.getMousePosition();
-    const hovered = rl.checkCollisionPointRec(mouse, rect);
-    rl.drawRectangleRec(rect, if (hovered) COL_BTN_HOVER else COL_BTN);
-    rl.drawRectangleLinesEx(rect, 1, COL_BORDER);
-
-    const label_size: i32 = 20;
-    const label_w = rl.measureText(label, label_size);
-    const label_x = @as(i32, @intFromFloat(rect.x)) + @divTrunc(MENU_BTN_W - label_w, 2);
-    const label_y = @as(i32, @intFromFloat(rect.y)) + @divTrunc(MENU_BTN_H - label_size, 2);
-    rl.drawText(label, label_x, label_y, label_size, COL_WHITE);
-
-    return rl.isMouseButtonPressed(rl.MouseButton.left) and hovered;
-}
-
 fn drawDifficultySelect() void {
-    const heading = "Select Difficulty";
-    const heading_size: i32 = 32;
-    const heading_w = rl.measureText(heading, heading_size);
-    const heading_x = @divTrunc(WIN_W - heading_w, 2);
-    const heading_y: i32 = @divTrunc(WIN_H, 2) - 120;
-    rl.drawText(heading, heading_x, heading_y, heading_size, COL_WHITE);
+    initDifficultyAssets();
+    const tex = difficulty_texture orelse return;
+    drawUiTexture(tex);
 
-    const stack_h = MENU_BTN_H * 3 + MENU_BTN_GAP * 2;
-    var y: i32 = @divTrunc(WIN_H - stack_h, 2);
+    const mouse = rl.getMousePosition();
+    const clicked = rl.isMouseButtonPressed(rl.MouseButton.left);
 
-    if (drawMenuButton(menuButtonRect(y), "Easy")) {
+    const easy = scaledHitRect(DIFF_BTN_X_NORM, EASY_HIT_Y_NORM, DIFF_BTN_W_NORM, DIFF_BTN_H_NORM);
+    if (clicked and rl.checkCollisionPointRec(mouse, easy)) {
         current_ai_config = .{
             .weights = "easy_weights.bin",
             .ai_depth = 2,
@@ -382,9 +497,9 @@ fn drawDifficultySelect() void {
         ui_screen = .InGame;
         return;
     }
-    y += MENU_BTN_H + MENU_BTN_GAP;
 
-    if (drawMenuButton(menuButtonRect(y), "Medium")) {
+    const medium = scaledHitRect(DIFF_BTN_X_NORM, MED_HIT_Y_NORM, DIFF_BTN_W_NORM, DIFF_BTN_H_NORM);
+    if (clicked and rl.checkCollisionPointRec(mouse, medium)) {
         current_ai_config = .{
             .weights = "med_weights.bin",
             .ai_depth = 4,
@@ -393,9 +508,9 @@ fn drawDifficultySelect() void {
         ui_screen = .InGame;
         return;
     }
-    y += MENU_BTN_H + MENU_BTN_GAP;
 
-    if (drawMenuButton(menuButtonRect(y), "Hard")) {
+    const hard = scaledHitRect(DIFF_BTN_X_NORM, HARD_HIT_Y_NORM, DIFF_BTN_W_NORM, DIFF_BTN_H_NORM);
+    if (clicked and rl.checkCollisionPointRec(mouse, hard)) {
         current_ai_config = .{
             .weights = "hard_weights.bin",
             .ai_depth = 6,
@@ -403,6 +518,10 @@ fn drawDifficultySelect() void {
         };
         ui_screen = .InGame;
     }
+}
+
+pub fn enterDifficultySelect() void {
+    ui_screen = .DifficultySelect;
 }
 
 // ── Public entry point ────────────────────────────────────────────────────────
@@ -413,10 +532,6 @@ pub fn drawFrame(player: *const GameState, ai: *const GameState) void {
     rl.clearBackground(COL_BG);
 
     switch (ui_screen) {
-        .LandingPage => {
-            drawLandingPage();
-            return;
-        },
         .DifficultySelect => {
             drawDifficultySelect();
             return;
@@ -424,14 +539,12 @@ pub fn drawFrame(player: *const GameState, ai: *const GameState) void {
         .InGame => {},
     }
 
-    // Red: current_ai_config is set from the difficulty button (weights, ai_depth, ai_beam_width).
-    // Feed current_ai_config into engine / AI worker pipelines before tick and draw.
-    // TODO: Hook Red's game engine loop functions here
-    // TODO: Red — tick/update player and AI GameState each frame before draw
-    // TODO: Red — drawFrame(player, ai) using existing board helpers below
-    // TODO: Red — wire keyboard/input handler for in-match controls
+    initInGameBgAnim();
+    updateInGameBgFrame();
+    drawInGameBgFrame();
 
-    rl.drawRectangle(DIVIDER_X, 0, 1, WIN_H, COL_DIVIDER);
+    initGameBoardAsset();
+    drawInGameBoardOverlay();
 
     drawBoard(PLAYER_LAYOUT, player);
     if (!player.game_over) drawGhostPiece(PLAYER_LAYOUT, player);
