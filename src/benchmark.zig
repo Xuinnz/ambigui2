@@ -20,8 +20,8 @@ pub fn main() !void {
         var moves: usize = 0;
         while (!state.game_over and moves < 5000) : (moves += 1) {
             const move = expectimax.bestMoveWithOptions(&state, &heuristics.TRAINED_WEIGHTS, .{
-                AI_DEPTH,
-                AI_BEAM_WIDTH,
+                .depth = AI_DEPTH,
+                .beam_width = AI_BEAM_WIDTH,
             });
             if (move) |m| state.applyMove(&m) else break;
         }
