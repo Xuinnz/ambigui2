@@ -7,20 +7,20 @@ const GameState = game_mod.GameState;
 const Weights = game_mod.Weights;
 
 pub const TrainerConfig = struct {
-    population_size: usize,
-    generations: usize,
-    games_per_candidate: usize,
-    tournament_size: usize,
-    elite_count: usize,
-    max_moves: usize,
-    thread_count: usize,
-    mutation_rate: f32,
-    mutation_scale: f32,
-    weight_min: f32,
-    weight_max: f32,
-    search_depth: u32,
-    search_beam_width: usize,
-    seed: u64,
+    population_size: usize, //total number of AI agents in 1 generation
+    generations: usize, //total number of iterations before training terminates
+    games_per_candidate: usize, //number of independent games played per candidate
+    tournament_size: usize, //number of random candidates chosen to compete against each other
+    elite_count: usize, //number of top performing agents preserved directly for next generation
+    max_moves: usize, //upper limit of moves permitted
+    thread_count: usize, //number of threads for concurrent games
+    mutation_rate: f32, //probability that child agent's heuristic weights will undergo mutation
+    mutation_scale: f32, //range of random values adjusted to the mutated agent
+    weight_min: f32, //minimum value of weight
+    weight_max: f32, //maximum value of weight
+    search_depth: u32, //lookahead depth
+    search_beam_width: usize, //beam width pruning
+    seed: u64, //masterseed number generator
 };
 
 const Candidate = struct {
@@ -76,6 +76,7 @@ fn smokeTestConfig() TrainerConfig {
     };
 }
 
+//evolutionary iteration
 pub fn runTrainer(allocator: std.mem.Allocator, config: TrainerConfig) !Weights {
     std.debug.assert(config.population_size > 0);
     std.debug.assert(config.tournament_size > 0);
@@ -94,19 +95,23 @@ pub fn runTrainer(allocator: std.mem.Allocator, config: TrainerConfig) !Weights 
     var rng = std.Random.Xoshiro256.init(config.seed);
     var random = rng.random();
 
+    //populate generation 0 with baseline heuristic weights and random mutation
     initPopulation(population, &random, config);
-
     var best_overall = Candidate{
         .weights = heuristics.DEFAULT_WEIGHTS,
         .fitness = -1.0,
     };
-
     var gen: usize = 0;
+    //starting point of the evolutionary loop
     while (gen < config.generations) : (gen += 1) {
+        //we add unified random seed for all agents
         fillSeeds(seeds, &random);
 
+        //spawn OS threads to play concurrent games
         evaluatePopulation(population, config, seeds);
 
+        //calculate the total fitness
+        //find the best performing
         var total_fitness: f32 = 0.0;
         for (population) |candidate| {
             total_fitness += candidate.fitness;
@@ -115,6 +120,7 @@ pub fn runTrainer(allocator: std.mem.Allocator, config: TrainerConfig) !Weights 
             }
         }
 
+        //sort population descending
         sortCandidates(population);
         const avg = total_fitness / @as(f32, @floatFromInt(population.len));
         std.debug.print(
@@ -132,15 +138,20 @@ pub fn runTrainer(allocator: std.mem.Allocator, config: TrainerConfig) !Weights 
             },
         );
 
+        //ELITISM: we copy the top performing agents directly to the next generation
+        //this is to preserve the top performing weights
         var i: usize = 0;
         while (i < config.elite_count) : (i += 1) {
             next_population[i] = population[i];
         }
 
+        //we fill the remaining population slots with tournament mating selection
         while (i < population.len) : (i += 1) {
             const parent_a = tournamentSelect(population, &random, config.tournament_size);
             const parent_b = tournamentSelect(population, &random, config.tournament_size);
+            //we combine the parent weights
             var child_weights = crossover(parent_a.weights, parent_b.weights, &random);
+            //inject a random scale of mutation
             mutate(&child_weights, &random, config);
             next_population[i] = .{ .weights = child_weights, .fitness = 0.0 };
         }
@@ -160,10 +171,11 @@ pub fn runTrainer(allocator: std.mem.Allocator, config: TrainerConfig) !Weights 
             best_overall.weights.w_col_transitions,
         },
     );
-
+    // this returns the best overall
     return best_overall.weights;
 }
 
+//we initialize the population
 fn initPopulation(population: []Candidate, random: *std.Random, config: TrainerConfig) void {
     if (population.len == 0) return;
     population[0] = .{ .weights = heuristics.DEFAULT_WEIGHTS, .fitness = 0.0 };
@@ -173,12 +185,14 @@ fn initPopulation(population: []Candidate, random: *std.Random, config: TrainerC
     }
 }
 
+//create a unified seeds for all matches
 fn fillSeeds(seeds: []u64, random: *std.Random) void {
     for (seeds) |*seed| {
         seed.* = random.int(u64);
     }
 }
 
+//create OS threads to play concurrent games
 fn evaluatePopulation(population: []Candidate, config: TrainerConfig, seeds: []const u64) void {
     const threads = if (config.thread_count == 0) 1 else config.thread_count;
     const chunk = (population.len + threads - 1) / threads;
@@ -201,6 +215,7 @@ fn evaluatePopulation(population: []Candidate, config: TrainerConfig, seeds: []c
     }
 }
 
+//
 fn evaluateRange(population: []Candidate, config: TrainerConfig, seeds: []const u64, start: usize, end: usize) void {
     var i: usize = start;
     while (i < end) : (i += 1) {
@@ -208,6 +223,7 @@ fn evaluateRange(population: []Candidate, config: TrainerConfig, seeds: []const 
     }
 }
 
+//we evaluate the candidate based on the average score it did across multiple games
 fn evaluateCandidate(weights: Weights, config: TrainerConfig, seeds: []const u64) f32 {
     var total: u64 = 0;
     for (seeds) |seed| {
@@ -216,6 +232,7 @@ fn evaluateCandidate(weights: Weights, config: TrainerConfig, seeds: []const u64
     return @as(f32, @floatFromInt(total)) / @as(f32, @floatFromInt(seeds.len));
 }
 
+//simulates the game, then returns the score of the specific agent
 fn playGame(weights: Weights, config: TrainerConfig, seed: u64) u32 {
     var state = GameState.init(seed);
     var moves: usize = 0;
@@ -235,6 +252,7 @@ fn playGame(weights: Weights, config: TrainerConfig, seed: u64) u32 {
     return state.lines_cleared;
 }
 
+//sorts the candidates based on its fitness (score)
 fn sortCandidates(population: []Candidate) void {
     var i: usize = 0;
     while (i < population.len) : (i += 1) {
@@ -251,19 +269,27 @@ fn sortCandidates(population: []Candidate) void {
     }
 }
 
+//we use this to randomly pick a "good genes" parent
 fn tournamentSelect(population: []Candidate, random: *std.Random, tournament_size: usize) Candidate {
+    //randomly pick a candidate from the population
     var best = population[random.intRangeLessThan(usize, 0, population.len)];
+
     var i: usize = 1;
     while (i < tournament_size) : (i += 1) {
+        //pick a contender at random
         const contender = population[random.intRangeLessThan(usize, 0, population.len)];
+        //compare the average scores and pick the best contender
         if (contender.fitness > best.fitness) {
             best = contender;
         }
     }
+    //we return the winner to be the parent
     return best;
 }
 
+//how parents will be bred together
 fn crossover(a: Weights, b: Weights, random: *std.Random) Weights {
+    //it returns a random value between the parent's weight
     return .{
         .w_aggregate = pickWeight(random, a.w_aggregate, b.w_aggregate),
         .w_holes = pickWeight(random, a.w_holes, b.w_holes),
@@ -274,10 +300,12 @@ fn crossover(a: Weights, b: Weights, random: *std.Random) Weights {
     };
 }
 
+//we pick random
 fn pickWeight(random: *std.Random, a: f32, b: f32) f32 {
     return if (random.boolean()) a else b;
 }
 
+//mutated weights
 fn mutate(weights: *Weights, random: *std.Random, config: TrainerConfig) void {
     weights.w_aggregate = mutateWeight(weights.w_aggregate, random, config);
     weights.w_holes = mutateWeight(weights.w_holes, random, config);
@@ -287,6 +315,7 @@ fn mutate(weights: *Weights, random: *std.Random, config: TrainerConfig) void {
     weights.w_col_transitions = mutateWeight(weights.w_col_transitions, random, config);
 }
 
+//mutation where it gets random value
 fn mutateWeight(value: f32, random: *std.Random, config: TrainerConfig) f32 {
     var out = value;
     if (random.float(f32) < config.mutation_rate) {
@@ -296,6 +325,7 @@ fn mutateWeight(value: f32, random: *std.Random, config: TrainerConfig) f32 {
     return std.math.clamp(out, config.weight_min, config.weight_max);
 }
 
+//random weight for initializing population
 fn randomWeights(random: *std.Random, config: TrainerConfig) Weights {
     return .{
         .w_aggregate = randomWeight(random, config),
@@ -307,11 +337,13 @@ fn randomWeights(random: *std.Random, config: TrainerConfig) Weights {
     };
 }
 
+//random weight generator
 fn randomWeight(random: *std.Random, config: TrainerConfig) f32 {
     const t = random.float(f32);
     return config.weight_min + (config.weight_max - config.weight_min) * t;
 }
 
+//write to file
 fn writeWeightsJson(path: []const u8, weights: Weights) !void {
     try std.fs.cwd().makePath("data");
     var file = try std.fs.cwd().createFile(path, .{ .truncate = true });
