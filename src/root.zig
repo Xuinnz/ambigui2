@@ -9,7 +9,6 @@ test "include all module tests" {
     _ = @import("ai/expectimax.zig");
     _ = @import("ai/genetic.zig");
     _ = @import("ai/heuristics.zig");
-    _ = @import("ai/zobrist.zig");
 
     _ = @import("ui/input.zig");
     _ = @import("ui/terminal.zig");

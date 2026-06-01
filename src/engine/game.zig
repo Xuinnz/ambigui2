@@ -1,7 +1,6 @@
 const std = @import("std");
 const Board = @import("board.zig").Board;
 const physics = @import("physics.zig");
-const zobrist = @import("../ai/zobrist.zig");
 const piece_mod = @import("piece.zig");
 const ShapeType = piece_mod.ShapeType;
 const Piece = piece_mod.Piece;
@@ -300,11 +299,7 @@ fn projectPiece(self: *GameState, piece: Piece, wall_out: bool) bool {
         const old_row: u16 = self.board.grid[b_y_usize] & Board.ROW_MASK;
         const new_row: u16 = old_row | projected_row;
         if (new_row != old_row) {
-            if (old_row != 0) {
-                self.zobrist_hash ^= zobrist.rowKey(b_y_usize, old_row);
-            }
             self.board.grid[b_y_usize] = new_row;
-            self.zobrist_hash ^= zobrist.rowKey(b_y_usize, new_row);
         }
     }
 
@@ -346,13 +341,7 @@ fn unprojectPiece(self: *GameState, piece: Piece, wall_out: bool) void {
         const old_row: u16 = self.board.grid[b_y_usize] & Board.ROW_MASK;
         const new_row: u16 = old_row & ~projected_row;
         if (new_row != old_row) {
-            if (old_row != 0) {
-                self.zobrist_hash ^= zobrist.rowKey(b_y_usize, old_row);
-            }
             self.board.grid[b_y_usize] = new_row;
-            if (new_row != 0) {
-                self.zobrist_hash ^= zobrist.rowKey(b_y_usize, new_row);
-            }
         }
     }
 }
@@ -369,7 +358,6 @@ pub const TopOutReason = enum {
 pub const GameState = struct {
     board: Board,
     eval_cache: EvalCache,
-    zobrist_hash: u64,
     current_piece: QuantumPiece,
     next_piece: QuantumPiece,
     held_piece: ?QuantumPiece,
@@ -390,7 +378,6 @@ pub const GameState = struct {
         var state = GameState{
             .board = Board.init(),
             .eval_cache = EvalCache.init(),
-            .zobrist_hash = 0,
             .current_piece = undefined,
             .next_piece = undefined,
             .held_piece = null,
@@ -410,7 +397,6 @@ pub const GameState = struct {
         state.next_piece = state.generateQuantumPiece();
         state.spawnNextPiece();
         state.eval_cache.recompute(&state.board);
-        state.zobrist_hash = zobrist.hashBoard(&state.board);
         return state;
     }
 
@@ -911,15 +897,9 @@ pub const GameState = struct {
         else
             self.current_piece.wall_out_b;
 
-        var hash_dirty = false;
-
         const cleared = self.board.clearFullLines();
         std.debug.assert(cleared <= 4);
         self.lines_cleared += @as(u32, cleared);
-
-        if (cleared > 0) {
-            hash_dirty = true;
-        }
 
         const line_scores = [_]u32{ 0, 100, 300, 500, 800 };
         self.score += line_scores[@intCast(cleared)] * (self.level + 1);
@@ -930,20 +910,12 @@ pub const GameState = struct {
             if (self.board.addPenaltyLine(hole_col)) {
                 self.game_over = true;
                 self.top_out_reason = .lock_out;
-                hash_dirty = true;
                 self.eval_cache.recompute(&self.board);
-                if (hash_dirty) {
-                    self.zobrist_hash = zobrist.hashBoard(&self.board);
-                }
                 return;
             }
-            hash_dirty = true;
         }
 
         self.eval_cache.recompute(&self.board);
-        if (hash_dirty) {
-            self.zobrist_hash = zobrist.hashBoard(&self.board);
-        }
         self.hold_used = false;
         self.spawnNextPiece();
     }
