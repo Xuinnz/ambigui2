@@ -1,4 +1,3 @@
-// src/ai/ai_worker.zig
 const std = @import("std");
 const game_mod = @import("../engine/game.zig");
 const expectimax = @import("expectimax.zig");
@@ -21,9 +20,24 @@ pub const AiWorker = struct {
 
     depth: u32,
     beam_width: usize,
+    weights: game_mod.Weights,
 
-    pub fn init(depth: u32, beam_width: usize) AiWorker {
-        return .{ .depth = depth, .beam_width = beam_width };
+    pub fn init(depth: u32, beam_width: usize, weights: game_mod.Weights) AiWorker {
+        return .{
+            .depth = depth,
+            .beam_width = beam_width,
+            .weights = weights,
+        };
+    }
+
+    // Main thread: update the difficulty settings dynamically
+    pub fn reconfigure(self: *AiWorker, new_depth: u32, new_beam_width: usize, new_weights: game_mod.Weights) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        self.depth = new_depth;
+        self.beam_width = new_beam_width;
+        self.weights = new_weights;
     }
 
     // Main thread: send a state for the AI to evaluate
@@ -36,8 +50,6 @@ pub const AiWorker = struct {
     }
 
     // Main thread: check if a result is ready.
-    // Returns null        → still computing, don't block
-    // Returns ?Move       → result ready (null inner = no valid move = game over)
     pub fn poll(self: *AiWorker) ??Move {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -56,29 +68,40 @@ pub const AiWorker = struct {
 
 pub fn aiThreadEntry(worker: *AiWorker) void {
     while (true) {
-        // Check for work
         worker.mutex.lock();
+
+        // 1. Check shutdown flag
         if (worker.shutdown) {
             worker.mutex.unlock();
             break;
         }
+
+        // 2. Check for work
         if (!worker.has_input) {
             worker.mutex.unlock();
             std.Thread.sleep(1 * std.time.ns_per_ms); // poll every 1ms
             continue;
         }
-        const snapshot = worker.input; // local copy
+
+        // 3. SECURE LOCAL COPIES
+        // We MUST copy the configuration variables into the thread's local stack
+        // before unlocking the mutex. This ensures that if the main thread calls
+        // `reconfigure()` mid-search, it won't corrupt the current calculation.
+        const snapshot = worker.input;
+        const local_depth = worker.depth;
+        const local_beam_width = worker.beam_width;
+        const local_weights = worker.weights;
+
         worker.has_input = false;
-        const depth = worker.depth;
-        const beam_width = worker.beam_width;
         worker.mutex.unlock();
 
-        // Heavy computation — no lock held here, renderer runs freely
-        const move = expectimax.bestMoveWithOptions(&snapshot, &heuristics.TRAINED_WEIGHTS, .{
-            .depth = depth,
-            .beam_width = beam_width,
+        // 4. Heavy computation — no lock held here, renderer runs freely
+        const move = expectimax.bestMoveWithOptions(&snapshot, &local_weights, .{
+            .depth = local_depth,
+            .beam_width = local_beam_width,
         });
 
+        // 5. Deliver result
         worker.mutex.lock();
         worker.output = move;
         worker.has_output = true;
