@@ -43,6 +43,15 @@ const COL_LABEL = rl.Color{ .r = 100, .g = 100, .b = 100, .a = 255 };
 const COL_WHITE = rl.Color{ .r = 240, .g = 240, .b = 240, .a = 255 };
 const COL_RED = rl.Color{ .r = 220, .g = 50, .b = 50, .a = 255 };
 const COL_DIVIDER = rl.Color{ .r = 45, .g = 45, .b = 45, .a = 255 };
+const COL_BTN = rl.Color{ .r = 55, .g = 55, .b = 55, .a = 255 };
+const COL_BTN_HOVER = rl.Color{ .r = 75, .g = 75, .b = 75, .a = 255 };
+
+var game_started: bool = false;
+
+const LANDING_TITLE: [:0]const u8 = "Ambigui2";
+const LANDING_TITLE_SIZE: i32 = 48;
+const PVP_BTN_W: i32 = 220;
+const PVP_BTN_H: i32 = 44;
 
 fn shapeColor(shape: ShapeType) rl.Color {
     return switch (shape) {
@@ -224,6 +233,38 @@ fn drawGameOverOverlay(layout: BoardLayout, comptime subtitle: [:0]const u8) voi
     rl.drawText(subtitle, layout.board_x + @divTrunc(BOARD_W - sw, 2), mid_y + 10, 14, COL_LABEL);
 }
 
+fn drawLandingPage() void {
+    const title_w = rl.measureText(LANDING_TITLE, LANDING_TITLE_SIZE);
+    const title_x = @divTrunc(WIN_W - title_w, 2);
+    const title_y: i32 = @divTrunc(WIN_H, 2) - 80;
+    rl.drawText(LANDING_TITLE, title_x, title_y, LANDING_TITLE_SIZE, COL_WHITE);
+
+    const btn_x = @divTrunc(WIN_W - PVP_BTN_W, 2);
+    const btn_y = title_y + LANDING_TITLE_SIZE + 28;
+    const btn: rl.Rectangle = .{
+        .x = @floatFromInt(btn_x),
+        .y = @floatFromInt(btn_y),
+        .width = @floatFromInt(PVP_BTN_W),
+        .height = @floatFromInt(PVP_BTN_H),
+    };
+
+    const mouse = rl.getMousePosition();
+    const hovered = rl.checkCollisionPointRec(mouse, btn);
+    rl.drawRectangleRec(btn, if (hovered) COL_BTN_HOVER else COL_BTN);
+    rl.drawRectangleLinesEx(btn, 1, COL_BORDER);
+
+    const label: [:0]const u8 = "Player vs AI";
+    const label_size: i32 = 18;
+    const label_w = rl.measureText(label, label_size);
+    const label_x = btn_x + @divTrunc(PVP_BTN_W - label_w, 2);
+    const label_y = btn_y + @divTrunc(PVP_BTN_H - label_size, 2);
+    rl.drawText(label, label_x, label_y, label_size, COL_WHITE);
+
+    if (rl.isMouseButtonPressed(rl.MouseButton.left) and hovered) {
+        game_started = true;
+    }
+}
+
 // ── Public entry point ────────────────────────────────────────────────────────
 pub fn drawFrame(player: *const GameState, ai: *const GameState) void {
     rl.beginDrawing();
@@ -231,17 +272,19 @@ pub fn drawFrame(player: *const GameState, ai: *const GameState) void {
 
     rl.clearBackground(COL_BG);
 
-    // Divider
+    if (!game_started) {
+        drawLandingPage();
+        return;
+    }
+
     rl.drawRectangle(DIVIDER_X, 0, 1, WIN_H, COL_DIVIDER);
 
-    // Player side
     drawBoard(PLAYER_LAYOUT, player);
     if (!player.game_over) drawCurrentPiece(PLAYER_LAYOUT, player);
     drawHold(PLAYER_LAYOUT, player);
     drawPanel(PLAYER_LAYOUT, player);
     if (player.game_over) drawGameOverOverlay(PLAYER_LAYOUT, "Press R to restart");
 
-    // AI side
     drawBoard(AI_LAYOUT, ai);
     if (!ai.game_over) drawCurrentPiece(AI_LAYOUT, ai);
     drawHold(AI_LAYOUT, ai);
