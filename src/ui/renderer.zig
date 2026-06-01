@@ -43,6 +43,62 @@ const COL_LABEL = rl.Color{ .r = 100, .g = 100, .b = 100, .a = 255 };
 const COL_WHITE = rl.Color{ .r = 240, .g = 240, .b = 240, .a = 255 };
 const COL_RED = rl.Color{ .r = 220, .g = 50, .b = 50, .a = 255 };
 const COL_DIVIDER = rl.Color{ .r = 45, .g = 45, .b = 45, .a = 255 };
+const COL_BTN = rl.Color{ .r = 55, .g = 55, .b = 55, .a = 255 };
+const COL_BTN_HOVER = rl.Color{ .r = 75, .g = 75, .b = 75, .a = 255 };
+
+const AiConfig = struct {
+    weights: []const u8,
+    ai_depth: u32,
+    ai_beam_width: u32,
+};
+
+var current_ai_config: AiConfig = .{
+    .weights = "default.bin",
+    .ai_depth = 0,
+    .ai_beam_width = 0,
+};
+
+const UiScreen = enum {
+    LandingPage,
+    DifficultySelect,
+    InGame,
+};
+
+var ui_screen: UiScreen = .LandingPage;
+
+const MENU_BTN_W: i32 = 200;
+const MENU_BTN_H: i32 = 44;
+const MENU_BTN_GAP: i32 = 16;
+
+const LANDING_ASSET: [:0]const u8 = "assets/landing_page/resized_main_page.png";
+var landing_texture: ?rl.Texture2D = null;
+var landing_assets_inited: bool = false;
+
+// Normalized hit box on main_page.png (3840×2160) for the "Player vs AI" pill
+const PVP_HIT_X_NORM: f32 = 0.40;
+const PVP_HIT_Y_NORM: f32 = 0.685;
+const PVP_HIT_W_NORM: f32 = 0.20;
+const PVP_HIT_H_NORM: f32 = 0.08;
+
+fn initLandingAssets() void {
+    if (landing_assets_inited) return;
+    landing_assets_inited = true;
+    landing_texture = rl.loadTexture(LANDING_ASSET) catch null;
+    if (landing_texture) |tex| {
+        rl.setTextureFilter(tex, .bilinear);
+    }
+}
+
+fn pvpHitRect() rl.Rectangle {
+    const w = @as(f32, @floatFromInt(WIN_W));
+    const h = @as(f32, @floatFromInt(WIN_H));
+    return .{
+        .x = w * PVP_HIT_X_NORM,
+        .y = h * PVP_HIT_Y_NORM,
+        .width = w * PVP_HIT_W_NORM,
+        .height = h * PVP_HIT_H_NORM,
+    };
+}
 
 fn shapeColor(shape: ShapeType) rl.Color {
     return switch (shape) {
@@ -256,6 +312,99 @@ fn drawGameOverOverlay(layout: BoardLayout, comptime subtitle: [:0]const u8) voi
     rl.drawText(subtitle, layout.board_x + @divTrunc(BOARD_W - sw, 2), mid_y + 10, 14, COL_LABEL);
 }
 
+fn drawLandingPage() void {
+    initLandingAssets();
+    const tex = landing_texture orelse return;
+
+    const src: rl.Rectangle = .{
+        .x = 0,
+        .y = 0,
+        .width = @floatFromInt(tex.width),
+        .height = @floatFromInt(tex.height),
+    };
+    const dest: rl.Rectangle = .{
+        .x = 0,
+        .y = 0,
+        .width = @floatFromInt(WIN_W),
+        .height = @floatFromInt(WIN_H),
+    };
+    rl.drawTexturePro(tex, src, dest, .{ .x = 0, .y = 0 }, 0, rl.Color.white);
+
+    const btn = pvpHitRect();
+    const mouse = rl.getMousePosition();
+    if (rl.isMouseButtonPressed(rl.MouseButton.left) and rl.checkCollisionPointRec(mouse, btn)) {
+        ui_screen = .DifficultySelect;
+    }
+}
+
+fn menuButtonRect(center_y: i32) rl.Rectangle {
+    const x = @divTrunc(WIN_W - MENU_BTN_W, 2);
+    return .{
+        .x = @floatFromInt(x),
+        .y = @floatFromInt(center_y),
+        .width = @floatFromInt(MENU_BTN_W),
+        .height = @floatFromInt(MENU_BTN_H),
+    };
+}
+
+fn drawMenuButton(rect: rl.Rectangle, label: [:0]const u8) bool {
+    const mouse = rl.getMousePosition();
+    const hovered = rl.checkCollisionPointRec(mouse, rect);
+    rl.drawRectangleRec(rect, if (hovered) COL_BTN_HOVER else COL_BTN);
+    rl.drawRectangleLinesEx(rect, 1, COL_BORDER);
+
+    const label_size: i32 = 20;
+    const label_w = rl.measureText(label, label_size);
+    const label_x = @as(i32, @intFromFloat(rect.x)) + @divTrunc(MENU_BTN_W - label_w, 2);
+    const label_y = @as(i32, @intFromFloat(rect.y)) + @divTrunc(MENU_BTN_H - label_size, 2);
+    rl.drawText(label, label_x, label_y, label_size, COL_WHITE);
+
+    return rl.isMouseButtonPressed(rl.MouseButton.left) and hovered;
+}
+
+fn drawDifficultySelect() void {
+    const heading = "Select Difficulty";
+    const heading_size: i32 = 32;
+    const heading_w = rl.measureText(heading, heading_size);
+    const heading_x = @divTrunc(WIN_W - heading_w, 2);
+    const heading_y: i32 = @divTrunc(WIN_H, 2) - 120;
+    rl.drawText(heading, heading_x, heading_y, heading_size, COL_WHITE);
+
+    const stack_h = MENU_BTN_H * 3 + MENU_BTN_GAP * 2;
+    var y: i32 = @divTrunc(WIN_H - stack_h, 2);
+
+    if (drawMenuButton(menuButtonRect(y), "Easy")) {
+        current_ai_config = .{
+            .weights = "easy_weights.bin",
+            .ai_depth = 2,
+            .ai_beam_width = 4,
+        };
+        ui_screen = .InGame;
+        return;
+    }
+    y += MENU_BTN_H + MENU_BTN_GAP;
+
+    if (drawMenuButton(menuButtonRect(y), "Medium")) {
+        current_ai_config = .{
+            .weights = "med_weights.bin",
+            .ai_depth = 4,
+            .ai_beam_width = 8,
+        };
+        ui_screen = .InGame;
+        return;
+    }
+    y += MENU_BTN_H + MENU_BTN_GAP;
+
+    if (drawMenuButton(menuButtonRect(y), "Hard")) {
+        current_ai_config = .{
+            .weights = "hard_weights.bin",
+            .ai_depth = 6,
+            .ai_beam_width = 16,
+        };
+        ui_screen = .InGame;
+    }
+}
+
 // ── Public entry point ────────────────────────────────────────────────────────
 pub fn drawFrame(player: *const GameState, ai: *const GameState) void {
     rl.beginDrawing();
@@ -263,10 +412,27 @@ pub fn drawFrame(player: *const GameState, ai: *const GameState) void {
 
     rl.clearBackground(COL_BG);
 
-    // Divider
+    switch (ui_screen) {
+        .LandingPage => {
+            drawLandingPage();
+            return;
+        },
+        .DifficultySelect => {
+            drawDifficultySelect();
+            return;
+        },
+        .InGame => {},
+    }
+
+    // Red: current_ai_config is set from the difficulty button (weights, ai_depth, ai_beam_width).
+    // Feed current_ai_config into engine / AI worker pipelines before tick and draw.
+    // TODO: Hook Red's game engine loop functions here
+    // TODO: Red — tick/update player and AI GameState each frame before draw
+    // TODO: Red — drawFrame(player, ai) using existing board helpers below
+    // TODO: Red — wire keyboard/input handler for in-match controls
+
     rl.drawRectangle(DIVIDER_X, 0, 1, WIN_H, COL_DIVIDER);
 
-    // Player side
     drawBoard(PLAYER_LAYOUT, player);
     if (!player.game_over) drawGhostPiece(PLAYER_LAYOUT, player);
     if (!player.game_over) drawCurrentPiece(PLAYER_LAYOUT, player);
@@ -274,7 +440,6 @@ pub fn drawFrame(player: *const GameState, ai: *const GameState) void {
     drawPanel(PLAYER_LAYOUT, player);
     if (player.game_over) drawGameOverOverlay(PLAYER_LAYOUT, "Press R to restart");
 
-    // AI side
     drawBoard(AI_LAYOUT, ai);
     if (!ai.game_over) drawGhostPiece(AI_LAYOUT, ai);
     if (!ai.game_over) drawCurrentPiece(AI_LAYOUT, ai);
