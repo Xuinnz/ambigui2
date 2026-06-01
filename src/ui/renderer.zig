@@ -43,15 +43,38 @@ const COL_LABEL = rl.Color{ .r = 100, .g = 100, .b = 100, .a = 255 };
 const COL_WHITE = rl.Color{ .r = 240, .g = 240, .b = 240, .a = 255 };
 const COL_RED = rl.Color{ .r = 220, .g = 50, .b = 50, .a = 255 };
 const COL_DIVIDER = rl.Color{ .r = 45, .g = 45, .b = 45, .a = 255 };
-const COL_BTN = rl.Color{ .r = 55, .g = 55, .b = 55, .a = 255 };
-const COL_BTN_HOVER = rl.Color{ .r = 75, .g = 75, .b = 75, .a = 255 };
 
 var game_started: bool = false;
 
-const LANDING_TITLE: [:0]const u8 = "Ambigui2";
-const LANDING_TITLE_SIZE: i32 = 48;
-const PVP_BTN_W: i32 = 220;
-const PVP_BTN_H: i32 = 44;
+const LANDING_ASSET: [:0]const u8 = "assets/landing_page/main_page.png";
+var landing_texture: ?rl.Texture2D = null;
+var landing_assets_inited: bool = false;
+
+// Normalized hit box on main_page.png (3840×2160) for the "Player vs AI" pill
+const PVP_HIT_X_NORM: f32 = 0.40;
+const PVP_HIT_Y_NORM: f32 = 0.685;
+const PVP_HIT_W_NORM: f32 = 0.20;
+const PVP_HIT_H_NORM: f32 = 0.08;
+
+fn initLandingAssets() void {
+    if (landing_assets_inited) return;
+    landing_assets_inited = true;
+    landing_texture = rl.loadTexture(LANDING_ASSET) catch null;
+    if (landing_texture) |tex| {
+        rl.setTextureFilter(tex, .bilinear);
+    }
+}
+
+fn pvpHitRect() rl.Rectangle {
+    const w = @as(f32, @floatFromInt(WIN_W));
+    const h = @as(f32, @floatFromInt(WIN_H));
+    return .{
+        .x = w * PVP_HIT_X_NORM,
+        .y = h * PVP_HIT_Y_NORM,
+        .width = w * PVP_HIT_W_NORM,
+        .height = h * PVP_HIT_H_NORM,
+    };
+}
 
 fn shapeColor(shape: ShapeType) rl.Color {
     return switch (shape) {
@@ -234,33 +257,26 @@ fn drawGameOverOverlay(layout: BoardLayout, comptime subtitle: [:0]const u8) voi
 }
 
 fn drawLandingPage() void {
-    const title_w = rl.measureText(LANDING_TITLE, LANDING_TITLE_SIZE);
-    const title_x = @divTrunc(WIN_W - title_w, 2);
-    const title_y: i32 = @divTrunc(WIN_H, 2) - 80;
-    rl.drawText(LANDING_TITLE, title_x, title_y, LANDING_TITLE_SIZE, COL_WHITE);
+    initLandingAssets();
+    const tex = landing_texture orelse return;
 
-    const btn_x = @divTrunc(WIN_W - PVP_BTN_W, 2);
-    const btn_y = title_y + LANDING_TITLE_SIZE + 28;
-    const btn: rl.Rectangle = .{
-        .x = @floatFromInt(btn_x),
-        .y = @floatFromInt(btn_y),
-        .width = @floatFromInt(PVP_BTN_W),
-        .height = @floatFromInt(PVP_BTN_H),
+    const src: rl.Rectangle = .{
+        .x = 0,
+        .y = 0,
+        .width = @floatFromInt(tex.width),
+        .height = @floatFromInt(tex.height),
     };
+    const dest: rl.Rectangle = .{
+        .x = 0,
+        .y = 0,
+        .width = @floatFromInt(WIN_W),
+        .height = @floatFromInt(WIN_H),
+    };
+    rl.drawTexturePro(tex, src, dest, .{ .x = 0, .y = 0 }, 0, rl.Color.white);
 
+    const btn = pvpHitRect();
     const mouse = rl.getMousePosition();
-    const hovered = rl.checkCollisionPointRec(mouse, btn);
-    rl.drawRectangleRec(btn, if (hovered) COL_BTN_HOVER else COL_BTN);
-    rl.drawRectangleLinesEx(btn, 1, COL_BORDER);
-
-    const label: [:0]const u8 = "Player vs AI";
-    const label_size: i32 = 18;
-    const label_w = rl.measureText(label, label_size);
-    const label_x = btn_x + @divTrunc(PVP_BTN_W - label_w, 2);
-    const label_y = btn_y + @divTrunc(PVP_BTN_H - label_size, 2);
-    rl.drawText(label, label_x, label_y, label_size, COL_WHITE);
-
-    if (rl.isMouseButtonPressed(rl.MouseButton.left) and hovered) {
+    if (rl.isMouseButtonPressed(rl.MouseButton.left) and rl.checkCollisionPointRec(mouse, btn)) {
         game_started = true;
     }
 }
