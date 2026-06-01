@@ -168,20 +168,30 @@ fn render(state: *const GameState) !void {
 
     // 2. Clone the static board memory so we can draw the falling piece onto it temporarily
     var render_grid = state.board.grid;
+    var ghost_grid: [Board.HEIGHT]u16 = [_]u16{0} ** Board.HEIGHT;
+
+    const ghost_a = state.projectGhostPiece(&state.current_piece.state_a);
+    const ghost_b = state.projectGhostPiece(&state.current_piece.state_b);
+    overlayPiece(&ghost_grid, &ghost_a);
+    overlayPiece(&ghost_grid, &ghost_b);
 
     // 3. Overlay both deterministic states at their independent positions.
     overlayPiece(&render_grid, &state.current_piece.state_a);
     overlayPiece(&render_grid, &state.current_piece.state_b);
 
     // 4. Print the final composited grid
-    for (render_grid) |raw_row| {
-        const clean_row = raw_row & Board.ROW_MASK;
+    var row: usize = 0;
+    while (row < Board.HEIGHT) : (row += 1) {
+        const live_row = render_grid[row] & Board.ROW_MASK;
+        const ghost_row = ghost_grid[row] & Board.ROW_MASK;
         try writer.print("|", .{});
         var col: usize = 0;
         while (col < Board.WIDTH) : (col += 1) {
-            const is_block = (clean_row & (@as(u16, 1) << @as(u4, @intCast(col)))) != 0;
-            if (is_block) {
+            const bit: u16 = @as(u16, 1) << @as(u4, @intCast(col));
+            if ((live_row & bit) != 0) {
                 try writer.print("[]", .{});
+            } else if ((ghost_row & bit) != 0) {
+                try writer.print("::", .{});
             } else {
                 try writer.print(" .", .{});
             }

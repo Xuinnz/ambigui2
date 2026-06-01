@@ -88,6 +88,11 @@ fn cellAt(board_x: i32, bx: i32, by: i32, color: rl.Color) void {
     const py = BOARD_Y + by * CELL;
     rl.drawRectangle(px + 1, py + 1, CELL - 2, CELL - 2, color);
 }
+fn cellAtOutline(board_x: i32, bx: i32, by: i32, color: rl.Color) void {
+    const px = board_x + bx * CELL;
+    const py = BOARD_Y + by * CELL;
+    rl.drawRectangleLines(px + 1, py + 1, CELL - 2, CELL - 2, color);
+}
 
 fn miniCellAt(ox: i32, oy: i32, col: usize, row: usize, color: rl.Color) void {
     const px = ox + @as(i32, @intCast(col)) * CELL;
@@ -113,6 +118,24 @@ fn drawPieceOnBoard(board_x: i32, piece: *const Piece, color: rl.Color) void {
             const bx: i32 = piece.x + @as(i32, @intCast(col));
             if (bx < 0 or bx >= @as(i32, Board.WIDTH)) continue;
             cellAt(board_x, bx, by, color);
+        }
+    }
+}
+fn drawPieceOnBoardOutline(board_x: i32, piece: *const Piece, color: rl.Color) void {
+    var row: usize = 0;
+    while (row < Piece.BOUND_SIZE) : (row += 1) {
+        const shift: u4 = @intCast((Piece.BOUND_SIZE - 1 - row) * 4);
+        const piece_row: u16 = (piece.matrix >> shift) & 0x0F;
+        if (piece_row == 0) continue;
+        const by: i32 = piece.y + @as(i32, @intCast(row));
+        if (by < 0 or by >= @as(i32, Board.HEIGHT)) continue;
+        var col: usize = 0;
+        while (col < Piece.BOUND_SIZE) : (col += 1) {
+            const is_block = (piece_row & (@as(u16, 1) << @as(u4, @intCast(col)))) != 0;
+            if (!is_block) continue;
+            const bx: i32 = piece.x + @as(i32, @intCast(col));
+            if (bx < 0 or bx >= @as(i32, Board.WIDTH)) continue;
+            cellAtOutline(board_x, bx, by, color);
         }
     }
 }
@@ -158,6 +181,15 @@ fn drawCurrentPiece(layout: BoardLayout, state: *const GameState) void {
         drawPieceOnBoard(layout.board_x, &qp.state_a, shapeColor(qp.state_a.shape_type));
     if (!qp.locked_b)
         drawPieceOnBoard(layout.board_x, &qp.state_b, withAlpha(shapeColor(qp.state_b.shape_type), 130));
+}
+
+fn drawGhostPiece(layout: BoardLayout, state: *const GameState) void {
+    const ghost_a = state.projectGhostPiece(&state.current_piece.state_a);
+    const ghost_b = state.projectGhostPiece(&state.current_piece.state_b);
+    // A ghost: crisp outline, matches the solid A piece above it
+    drawPieceOnBoardOutline(layout.board_x, &ghost_a, withAlpha(shapeColor(ghost_a.shape_type), 180));
+    // B ghost: barely-there fill, matches the faint B piece above it
+    drawPieceOnBoard(layout.board_x, &ghost_b, withAlpha(shapeColor(ghost_b.shape_type), 25));
 }
 
 fn drawHold(layout: BoardLayout, state: *const GameState) void {
@@ -236,6 +268,7 @@ pub fn drawFrame(player: *const GameState, ai: *const GameState) void {
 
     // Player side
     drawBoard(PLAYER_LAYOUT, player);
+    if (!player.game_over) drawGhostPiece(PLAYER_LAYOUT, player);
     if (!player.game_over) drawCurrentPiece(PLAYER_LAYOUT, player);
     drawHold(PLAYER_LAYOUT, player);
     drawPanel(PLAYER_LAYOUT, player);
@@ -243,6 +276,7 @@ pub fn drawFrame(player: *const GameState, ai: *const GameState) void {
 
     // AI side
     drawBoard(AI_LAYOUT, ai);
+    if (!ai.game_over) drawGhostPiece(AI_LAYOUT, ai);
     if (!ai.game_over) drawCurrentPiece(AI_LAYOUT, ai);
     drawHold(AI_LAYOUT, ai);
     drawPanel(AI_LAYOUT, ai);
