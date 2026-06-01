@@ -70,7 +70,7 @@ const MENU_BTN_W: i32 = 200;
 const MENU_BTN_H: i32 = 44;
 const MENU_BTN_GAP: i32 = 16;
 
-const LANDING_ASSET: [:0]const u8 = "assets/landing_page/main_page.png";
+const LANDING_ASSET: [:0]const u8 = "assets/landing_page/resized_main_page.png";
 var landing_texture: ?rl.Texture2D = null;
 var landing_assets_inited: bool = false;
 
