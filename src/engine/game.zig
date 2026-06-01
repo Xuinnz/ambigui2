@@ -424,6 +424,18 @@ pub const GameState = struct {
         return weights.w_aggregate * @as(f32, @floatFromInt(c.aggregate_height)) + weights.w_holes * @as(f32, @floatFromInt(c.hole_count)) + weights.w_bumpiness * @as(f32, @floatFromInt(c.bumpiness)) + weights.w_wells * @as(f32, @floatFromInt(c.wells)) + weights.w_row_transitions * @as(f32, @floatFromInt(c.row_transitions)) + weights.w_col_transitions * @as(f32, @floatFromInt(c.col_transitions));
     }
 
+    /// Returns the projected landing position for a piece without mutating state.
+    pub fn projectGhostPiece(self: *const GameState, piece: *const Piece) Piece {
+        var ghost = piece.*;
+        while (true) {
+            var next = ghost;
+            next.y += 1;
+            if (checkStateCollision(self, &next)) break;
+            ghost = next;
+        }
+        return ghost;
+    }
+
     /// Enumerates legal placements for the current quantum piece.
     pub fn getMoves(self: *const GameState) MoveList {
         var moves = MoveList.init();
