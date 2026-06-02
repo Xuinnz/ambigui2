@@ -4,6 +4,8 @@ const game_mod = @import("engine/game.zig");
 const renderer = @import("ui/renderer.zig");
 const ai_worker_mod = @import("ai/worker.zig");
 const heuristics = @import("ai/heuristics.zig");
+const config = @import("config");
+const SEED: u64 = config.seed;
 
 const GameState = game_mod.GameState;
 const Weights = game_mod.Weights;
@@ -71,8 +73,8 @@ pub fn main() !void {
     var game_mode: GameMode = .VsAI;
     var ai_cfg: AiGameConfig = makeConfig(.Medium, trained);
 
-    var player = GameState.init(42);
-    var ai = GameState.init(1337);
+    var player = GameState.init(SEED);
+    var ai = GameState.init(SEED);
 
     // AI worker — initially with medium config; reconfigured on difficulty select
     var worker = AiWorker.init(ai_cfg.depth, ai_cfg.beam_width, ai_cfg.weights);
@@ -91,7 +93,7 @@ pub fn main() !void {
 
         switch (app_state) {
 
-            // ── Landing page ─────────────────────────────────────────────
+            // ── Landing page ──────────────────────────────────────────────────
             .Landing => {
                 if (renderer.drawLandingFrame()) |mode| {
                     game_mode = mode;
@@ -99,14 +101,13 @@ pub fn main() !void {
                 }
             },
 
-            // ── Difficulty select ────────────────────────────────────────
+            // ── Difficulty select ─────────────────────────────────────────────
             .DifficultySelect => {
                 if (renderer.drawDifficultyFrame()) |diff| {
                     ai_cfg = makeConfig(diff, trained);
 
-                    const seed = @as(u64, @intCast(now));
-                    player = GameState.init(seed);
-                    ai = GameState.init(seed +% 1);
+                    player = GameState.init(SEED);
+                    ai = GameState.init(SEED);
                     last_gravity = now;
                     last_ai_step = now;
                     show_winner = false;
@@ -122,7 +123,7 @@ pub fn main() !void {
                 }
             },
 
-            // ── VS AI gameplay ───────────────────────────────────────────
+            // ── VS AI gameplay ────────────────────────────────────────────────
             .PlayingVsAI => {
                 // Player input
                 if (!player.game_over) {
@@ -167,7 +168,7 @@ pub fn main() !void {
                 renderer.drawVsAiFrame(&player, &ai, false);
             },
 
-            // ── Solo gameplay ────────────────────────────────────────────
+            // ── Solo gameplay ─────────────────────────────────────────────────
             .PlayingSolo => {
                 if (!player.game_over) {
                     if (rl.isKeyPressed(.left)) player.tryMoveHorizontal(-1);
@@ -186,21 +187,21 @@ pub fn main() !void {
                         last_gravity = now;
                     }
                 } else if (rl.isKeyPressed(.r)) {
-                    player = GameState.init(@as(u64, @intCast(now)));
-                    last_gravity = now;
+                    // FIX: R goes back to landing page, not restarts the game
+                    app_state = .Landing;
                 }
 
                 renderer.drawSoloFrame(&player);
             },
 
-            // ── Both game over — show winner ──────────────────────────────
+            // ── Both game over — show winner ───────────────────────────────────
             .BothGameOver => {
                 renderer.drawVsAiFrame(&player, &ai, true);
 
-                // Press R → back to difficulty select
+                // FIX: R goes back to landing page, not difficulty select
                 if (rl.isKeyPressed(.r)) {
                     show_winner = false;
-                    app_state = .DifficultySelect;
+                    app_state = .Landing;
                 }
             },
         }
