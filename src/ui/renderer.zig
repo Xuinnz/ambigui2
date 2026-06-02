@@ -10,7 +10,7 @@ const Board = board_mod.Board;
 const Piece = piece_mod.Piece;
 const ShapeType = piece_mod.ShapeType;
 
-// ── Layout constants ──────────────────────────────────────────────────────────
+// ── Layout constants ───────────────────────────────────────────────────────────
 pub const CELL: i32 = 28;
 const BOARD_W: i32 = @as(i32, Board.WIDTH) * CELL;
 const BOARD_H: i32 = @as(i32, Board.HEIGHT) * CELL;
@@ -45,7 +45,7 @@ const PROB_B_Y: i32 = PROB_A_Y + BOX + GAP;
 const NEXT_Y: i32 = BOARD_Y;
 const STATS_Y: i32 = NEXT_Y + BOX + GAP;
 
-// ── Colours ───────────────────────────────────────────────────────────────────
+// ── Colours ────────────────────────────────────────────────────────────────────
 const COL_BG = rl.Color{ .r = 18, .g = 18, .b = 18, .a = 255 };
 const COL_EMPTY = rl.Color{ .r = 30, .g = 30, .b = 30, .a = 255 };
 const COL_LOCKED = rl.Color{ .r = 160, .g = 160, .b = 160, .a = 255 };
@@ -58,7 +58,7 @@ const COL_GOLD = rl.Color{ .r = 255, .g = 210, .b = 0, .a = 255 };
 const COL_DIVIDER = rl.Color{ .r = 45, .g = 45, .b = 45, .a = 255 };
 const COL_BLACK = rl.Color.black;
 
-// ── Public types ──────────────────────────────────────────────────────────────
+// ── Public types ───────────────────────────────────────────────────────────────
 pub const GameMode = enum { Solo, VsAI };
 pub const Difficulty = enum { Easy, Medium, Hard };
 
@@ -69,18 +69,18 @@ pub const AiGameConfig = struct {
     step_ms: i64,
 };
 
-// ── Asset paths ───────────────────────────────────────────────────────────────
+// ── Asset paths ────────────────────────────────────────────────────────────────
+// FIX: game_board.png removed — board is drawn programmatically (no more misalignment)
 const LANDING_ASSET: [:0]const u8 = "assets/landing_page/resized_main_page.png";
 const DIFFICULTY_ASSET: [:0]const u8 = "assets/landing_page/difficulty_page.png";
-const GAME_BOARD_ASSET: [:0]const u8 = "assets/vs_ai/game_board.png";
 const BLOCK_BOX_ASSET: [:0]const u8 = "assets/vs_ai/block.png";
 const VS_AI_FRAMES_DIR: []const u8 = "assets/vs_ai/frames";
 const BG_FRAME_DURATION: f32 = 1.0 / 24.0;
 
-// ── Asset globals ─────────────────────────────────────────────────────────────
+// ── Asset globals ──────────────────────────────────────────────────────────────
 var landing_tex: ?rl.Texture2D = null;
 var difficulty_tex: ?rl.Texture2D = null;
-var game_board_tex: ?rl.Texture2D = null;
+// FIX: game_board_tex removed
 var block_box_tex: ?rl.Texture2D = null;
 
 var bg_textures: []rl.Texture2D = &.{};
@@ -98,7 +98,7 @@ const EASY_HIT = [4]f32{ 0.40, 0.54, 0.20, 0.08 };
 const MED_HIT = [4]f32{ 0.40, 0.64, 0.20, 0.08 };
 const HARD_HIT = [4]f32{ 0.40, 0.74, 0.20, 0.08 };
 
-// ── Frame file helper ─────────────────────────────────────────────────────────
+// ── Frame file helper ──────────────────────────────────────────────────────────
 const FrameFile = struct { num: u32, name: []const u8 };
 
 fn isFrameAsset(name: []const u8) bool {
@@ -175,11 +175,9 @@ fn loadTex(path: [:0]const u8) ?rl.Texture2D {
     return t;
 }
 
-// ── Public: eager asset loading ───────────────────────────────────────────────
+// ── Public: eager asset loading ────────────────────────────────────────────────
 /// Call once after initWindow(), before the game loop.
-/// Shows a "Loading..." screen; all textures load here to avoid in-game freezes.
 pub fn preloadAssets() void {
-    // Draw loading frame so window doesn't appear frozen
     rl.beginDrawing();
     rl.clearBackground(COL_BG);
     const msg = "Loading...";
@@ -190,12 +188,12 @@ pub fn preloadAssets() void {
 
     landing_tex = loadTex(LANDING_ASSET);
     difficulty_tex = loadTex(DIFFICULTY_ASSET);
-    game_board_tex = loadTex(GAME_BOARD_ASSET);
+    // FIX: game_board_tex no longer loaded — board drawn programmatically
     block_box_tex = loadTex(BLOCK_BOX_ASSET);
     loadBgFrames();
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────────
 fn scaledRect(norm: [4]f32) rl.Rectangle {
     return .{
         .x = @as(f32, @floatFromInt(WIN_W)) * norm[0],
@@ -232,7 +230,7 @@ fn drawShadowText(text: [:0]const u8, x: i32, y: i32, sz: i32, col: rl.Color) vo
     rl.drawText(text, x, y, sz, col);
 }
 
-// ── Cell primitives ───────────────────────────────────────────────────────────
+// ── Cell primitives ────────────────────────────────────────────────────────────
 fn cellAt(board_x: i32, bx: i32, by: i32, color: rl.Color) void {
     const px = board_x + bx * CELL;
     const py = BOARD_Y + by * CELL;
@@ -251,7 +249,7 @@ fn miniCellAt(ox: i32, oy: i32, col: usize, row: usize, color: rl.Color) void {
     rl.drawRectangle(px + 1, py + 1, CELL - 2, CELL - 2, color);
 }
 
-// ── Piece drawing ─────────────────────────────────────────────────────────────
+// ── Piece drawing ──────────────────────────────────────────────────────────────
 fn drawPieceOnBoard(board_x: i32, piece: *const Piece, color: rl.Color) void {
     var row: usize = 0;
     while (row < Piece.BOUND_SIZE) : (row += 1) {
@@ -304,16 +302,26 @@ fn drawPieceMini(piece: *const Piece, ox: i32, oy: i32, color: rl.Color) void {
     }
 }
 
-// ── Board texture helpers ─────────────────────────────────────────────────────
+// ── Board drawing ──────────────────────────────────────────────────────────────
+// FIX: drawBoardBg now only draws the border outline.
+// The texture was removed because stretching game_board.png to BOARD_W×BOARD_H
+// caused a size mismatch with the actual cell grid drawn on top of it.
 fn drawBoardBg(board_x: i32) void {
-    if (game_board_tex) |tex| {
-        const src = rl.Rectangle{ .x = 0, .y = 0, .width = @floatFromInt(tex.width), .height = @floatFromInt(tex.height) };
-        const dest = rl.Rectangle{ .x = @floatFromInt(board_x), .y = @floatFromInt(BOARD_Y), .width = @floatFromInt(BOARD_W), .height = @floatFromInt(BOARD_H) };
-        rl.drawTexturePro(tex, src, dest, .{ .x = 0, .y = 0 }, 0, rl.Color.white);
-    } else {
-        // Fallback: plain dark background + border
-        rl.drawRectangle(board_x, BOARD_Y, BOARD_W, BOARD_H, COL_EMPTY);
-        rl.drawRectangleLines(board_x - 1, BOARD_Y - 1, BOARD_W + 2, BOARD_H + 2, COL_BORDER);
+    rl.drawRectangle(board_x, BOARD_Y, BOARD_W, BOARD_H, COL_BLACK);
+    rl.drawRectangleLines(board_x - 1, BOARD_Y - 1, BOARD_W + 2, BOARD_H + 2, COL_BORDER);
+}
+
+// FIX: renamed from drawLockedCells and now draws ALL cells — both empty and
+// locked — so the board grid is always visible without any texture background.
+fn drawBoardCells(layout: BoardLayout, state: *const GameState) void {
+    var row: usize = 0;
+    while (row < Board.HEIGHT) : (row += 1) {
+        var col: usize = 0;
+        while (col < Board.WIDTH) : (col += 1) {
+            const bit: u16 = @as(u16, 1) << @as(u4, @intCast(col));
+            const locked = (state.board.grid[row] & bit) != 0;
+            cellAt(layout.board_x, @intCast(col), @intCast(row), if (locked) COL_LOCKED else COL_EMPTY);
+        }
     }
 }
 
@@ -328,7 +336,7 @@ fn drawBoxBg(x: i32, y: i32, w: i32, h: i32) void {
     }
 }
 
-// ── Background animation ──────────────────────────────────────────────────────
+// ── Background animation ───────────────────────────────────────────────────────
 fn updateBgFrame() void {
     if (bg_textures.len == 0) return;
     bg_frame_timer += rl.getFrameTime();
@@ -346,7 +354,7 @@ fn drawBgFrame() void {
     drawFullscreenTex(bg_textures[idx]);
 }
 
-// ── Board layout descriptor ───────────────────────────────────────────────────
+// ── Board layout descriptor ────────────────────────────────────────────────────
 const BoardLayout = struct {
     left_x: i32,
     board_x: i32,
@@ -368,35 +376,38 @@ const AI_LAYOUT = BoardLayout{
     .label = "AI",
 };
 
-// ── Per-board drawing ─────────────────────────────────────────────────────────
-fn drawLockedCells(layout: BoardLayout, state: *const GameState) void {
-    var row: usize = 0;
-    while (row < Board.HEIGHT) : (row += 1) {
-        var col: usize = 0;
-        while (col < Board.WIDTH) : (col += 1) {
-            const bit: u16 = @as(u16, 1) << @as(u4, @intCast(col));
-            if ((state.board.grid[row] & bit) != 0)
-                cellAt(layout.board_x, @intCast(col), @intCast(row), COL_LOCKED);
-        }
-    }
+// ── Per-board drawing ──────────────────────────────────────────────────────────
+fn drawGhostPieces(layout: BoardLayout, state: *const GameState) void {
+    const ghost_a = state.projectGhostPiece(&state.current_piece.state_a);
+    const ghost_b = state.projectGhostPiece(&state.current_piece.state_b);
+    // A ghost: crisp outline, matches the solid A piece above it
+    drawPieceOnBoardOutline(layout.board_x, &ghost_a, withAlpha(shapeColor(ghost_a.shape_type), 180));
+    // B ghost: barely-there fill, matches the faint B piece above it
+    drawPieceOnBoard(layout.board_x, &ghost_b, withAlpha(shapeColor(ghost_b.shape_type), 25));
 }
 
-fn drawGhostPieces(layout: BoardLayout, state: *const GameState) void {
-    const qp = &state.current_piece;
+fn cellAtOutline(board_x: i32, bx: i32, by: i32, color: rl.Color) void {
+    const px = board_x + bx * CELL;
+    const py = BOARD_Y + by * CELL;
+    rl.drawRectangleLines(px + 1, py + 1, CELL - 2, CELL - 2, color);
+}
 
-    // Ghost B — very faint fill (draw first, A outline drawn on top)
-    if (!qp.locked_b) {
-        const ghost = state.projectGhostPiece(&qp.state_b);
-        if (ghost.y > qp.state_b.y) {
-            drawPieceOnBoard(layout.board_x, &ghost, withAlpha(shapeColor(qp.state_b.shape_type), 25));
-        }
-    }
-
-    // Ghost A — crisp outline only
-    if (!qp.locked_a) {
-        const ghost = state.projectGhostPiece(&qp.state_a);
-        if (ghost.y > qp.state_a.y) {
-            drawPieceOutlineOnBoard(layout.board_x, &ghost, shapeColor(qp.state_a.shape_type));
+// Add this alongside drawPieceOnBoard
+fn drawPieceOnBoardOutline(board_x: i32, piece: *const Piece, color: rl.Color) void {
+    var row: usize = 0;
+    while (row < Piece.BOUND_SIZE) : (row += 1) {
+        const shift: u4 = @intCast((Piece.BOUND_SIZE - 1 - row) * 4);
+        const piece_row: u16 = (piece.matrix >> shift) & 0x0F;
+        if (piece_row == 0) continue;
+        const by: i32 = piece.y + @as(i32, @intCast(row));
+        if (by < 0 or by >= @as(i32, Board.HEIGHT)) continue;
+        var col: usize = 0;
+        while (col < Piece.BOUND_SIZE) : (col += 1) {
+            const is_block = (piece_row & (@as(u16, 1) << @as(u4, @intCast(col)))) != 0;
+            if (!is_block) continue;
+            const bx: i32 = piece.x + @as(i32, @intCast(col));
+            if (bx < 0 or bx >= @as(i32, Board.WIDTH)) continue;
+            cellAtOutline(board_x, bx, by, color);
         }
     }
 }
@@ -417,19 +428,54 @@ fn drawHold(layout: BoardLayout, state: *const GameState) void {
     }
 }
 
+// FIX: prob boxes now show the piece shape inside block.png, with the
+// probability label ("A 70%") in a small dark strip at the top of the box.
+// Previously the box showed only the text label and the piece was never drawn.
 fn drawProbBoxes(layout: BoardLayout, state: *const GameState) void {
     var buf: [16]u8 = undefined;
     const pct: u32 = @intFromFloat(state.current_piece.prob_a * 100.0);
+    const label_h: i32 = 16; // height of the dark strip that holds the text
 
+    // ── State A box ──────────────────────────────────────────────────────────
     drawBoxBg(layout.left_x, PROB_A_Y, BOX, BOX);
+    // Draw the piece filling the whole box
+    drawPieceMini(
+        &state.current_piece.state_a,
+        layout.left_x,
+        PROB_A_Y,
+        shapeColor(state.current_piece.state_a.shape_type),
+    );
+    // Dark strip at the top so the label stays readable over the piece
+    rl.drawRectangle(layout.left_x, PROB_A_Y, BOX, label_h, withAlpha(COL_BLACK, 170));
     const ta = std.fmt.bufPrintZ(&buf, "A {d}%", .{pct}) catch return;
-    const wa = rl.measureText(ta, 13);
-    rl.drawText(ta, layout.left_x + @divTrunc(BOX - wa, 2), PROB_A_Y + @divTrunc(BOX - 13, 2), 13, shapeColor(state.current_piece.state_a.shape_type));
+    const wa = rl.measureText(ta, 12);
+    rl.drawText(
+        ta,
+        layout.left_x + @divTrunc(BOX - wa, 2),
+        PROB_A_Y + 2,
+        12,
+        shapeColor(state.current_piece.state_a.shape_type),
+    );
 
+    // ── State B box ──────────────────────────────────────────────────────────
     drawBoxBg(layout.left_x, PROB_B_Y, BOX, BOX);
+    // B is drawn at reduced alpha to match its role as the secondary state
+    drawPieceMini(
+        &state.current_piece.state_b,
+        layout.left_x,
+        PROB_B_Y,
+        withAlpha(shapeColor(state.current_piece.state_b.shape_type), 160),
+    );
+    rl.drawRectangle(layout.left_x, PROB_B_Y, BOX, label_h, withAlpha(COL_BLACK, 170));
     const tb = std.fmt.bufPrintZ(&buf, "B {d}%", .{100 - pct}) catch return;
-    const wb = rl.measureText(tb, 13);
-    rl.drawText(tb, layout.left_x + @divTrunc(BOX - wb, 2), PROB_B_Y + @divTrunc(BOX - 13, 2), 13, shapeColor(state.current_piece.state_b.shape_type));
+    const wb = rl.measureText(tb, 12);
+    rl.drawText(
+        tb,
+        layout.left_x + @divTrunc(BOX - wb, 2),
+        PROB_B_Y + 2,
+        12,
+        shapeColor(state.current_piece.state_b.shape_type),
+    );
 }
 
 fn drawNext(layout: BoardLayout, state: *const GameState) void {
@@ -472,7 +518,8 @@ fn drawGameOverOverlay(layout: BoardLayout, subtitle: [:0]const u8) void {
 }
 
 fn drawOneSide(layout: BoardLayout, state: *const GameState, game_over_msg: [:0]const u8) void {
-    drawLockedCells(layout, state);
+    // FIX: was drawLockedCells — now draws ALL cells so the grid is always visible
+    drawBoardCells(layout, state);
     if (!state.game_over) {
         drawGhostPieces(layout, state);
         drawActivePieces(layout, state);
@@ -484,12 +531,10 @@ fn drawOneSide(layout: BoardLayout, state: *const GameState, game_over_msg: [:0]
     if (state.game_over) drawGameOverOverlay(layout, game_over_msg);
 }
 
-// ── Winner screen overlay ─────────────────────────────────────────────────────
+// ── Winner screen overlay ──────────────────────────────────────────────────────
 fn drawWinnerScreen(player: *const GameState, ai: *const GameState) void {
-    // Dim the whole screen
     rl.drawRectangle(0, 0, WIN_W, WIN_H, withAlpha(COL_BLACK, 160));
 
-    // Winner banner
     const mid_x = @divTrunc(WIN_W, 2);
     const mid_y = @divTrunc(WIN_H, 2);
 
@@ -521,12 +566,13 @@ fn drawWinnerScreen(player: *const GameState, ai: *const GameState) void {
     const aw = rl.measureText(as_, 22);
     rl.drawText(as_, mid_x - @divTrunc(aw, 2), mid_y + 10, 22, COL_WHITE);
 
-    const hint = "Press R to play again";
+    // R now returns to the main menu
+    const hint = "Press R for main menu";
     const hw = rl.measureText(hint, 14);
     rl.drawText(hint, mid_x - @divTrunc(hw, 2), mid_y + 56, 14, COL_LABEL);
 }
 
-// ── Public screen drawing functions ──────────────────────────────────────────
+// ── Public screen drawing functions ───────────────────────────────────────────
 
 /// Returns the selected GameMode when player clicks, null otherwise.
 pub fn drawLandingFrame() ?GameMode {
@@ -573,12 +619,14 @@ pub fn drawVsAiFrame(
     updateBgFrame();
     drawBgFrame();
 
+    // drawBoardBg now only draws the border — cells are drawn inside drawOneSide
     drawBoardBg(L_BOARD_X);
     drawBoardBg(R_BOARD_X);
 
     rl.drawRectangle(DIVIDER_X, 0, 1, WIN_H, COL_DIVIDER);
 
-    drawOneSide(PLAYER_LAYOUT, player, "Press R to restart");
+    // FIX: subtitle changed — R now returns to main menu, not restart
+    drawOneSide(PLAYER_LAYOUT, player, "Press R for menu");
     drawOneSide(AI_LAYOUT, ai, "Waiting...");
 
     if (show_winner) drawWinnerScreen(player, ai);
@@ -586,7 +634,6 @@ pub fn drawVsAiFrame(
 
 /// Draw Solo game frame (player board centered).
 pub fn drawSoloFrame(player: *const GameState) void {
-    // Center single board
     const cx = @divTrunc(WIN_W - BOARD_W, 2);
     const lx = cx - BOX - GAP;
     const rx = cx + BOARD_W + GAP;
@@ -603,5 +650,6 @@ pub fn drawSoloFrame(player: *const GameState) void {
     updateBgFrame();
     drawBgFrame();
     drawBoardBg(cx);
-    drawOneSide(solo, player, "Press R to restart");
+    // FIX: subtitle changed — R now returns to main menu
+    drawOneSide(solo, player, "Press R for menu");
 }
