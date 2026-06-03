@@ -190,6 +190,7 @@ pub fn preloadAssets() void {
     difficulty_tex = loadTex(DIFFICULTY_ASSET);
     // FIX: game_board_tex no longer loaded — board drawn programmatically
     block_box_tex = loadTex(BLOCK_BOX_ASSET);
+
     loadBgFrames();
 }
 
@@ -454,7 +455,7 @@ fn drawProbBoxes(layout: BoardLayout, state: *const GameState) void {
         layout.left_x + @divTrunc(BOX - wa, 2),
         PROB_A_Y + 2,
         12,
-        shapeColor(state.current_piece.state_a.shape_type),
+        COL_WHITE,
     );
 
     // ── State B box ──────────────────────────────────────────────────────────
@@ -474,7 +475,7 @@ fn drawProbBoxes(layout: BoardLayout, state: *const GameState) void {
         layout.left_x + @divTrunc(BOX - wb, 2),
         PROB_B_Y + 2,
         12,
-        shapeColor(state.current_piece.state_b.shape_type),
+        COL_WHITE,
     );
 }
 
@@ -487,23 +488,23 @@ fn drawNext(layout: BoardLayout, state: *const GameState) void {
 fn drawStats(layout: BoardLayout, state: *const GameState) void {
     var buf: [48]u8 = undefined;
     const x = layout.right_x;
-    const lh: i32 = 20;
+    const lh: i32 = 50;
     var y: i32 = STATS_Y;
 
     const header = std.fmt.bufPrintZ(&buf, "{s}", .{layout.label}) catch return;
-    drawShadowText(header, x, y, 15, COL_WHITE);
+    drawShadowText(header, x, y, 30, COL_WHITE);
     y += lh + 4;
 
     const score = std.fmt.bufPrintZ(&buf, "SCORE: {d}", .{state.score}) catch return;
-    drawShadowText(score, x, y, 12, COL_WHITE);
+    drawShadowText(score, x, y, 20, COL_WHITE);
     y += lh;
 
     const lines = std.fmt.bufPrintZ(&buf, "LINES: {d}", .{state.lines_cleared}) catch return;
-    drawShadowText(lines, x, y, 12, COL_WHITE);
+    drawShadowText(lines, x, y, 20, COL_WHITE);
     y += lh;
 
     const level = std.fmt.bufPrintZ(&buf, "LEVEL: {d}", .{state.level}) catch return;
-    drawShadowText(level, x, y, 12, COL_WHITE);
+    drawShadowText(level, x, y, 20, COL_WHITE);
 }
 
 fn drawGameOverOverlay(layout: BoardLayout, subtitle: [:0]const u8) void {
