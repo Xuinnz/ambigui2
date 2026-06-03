@@ -14,7 +14,7 @@ const AiGameConfig = renderer.AiGameConfig;
 const Difficulty = renderer.Difficulty;
 const GameMode = renderer.GameMode;
 
-const GRAVITY_MS: i64 = 500;
+const GRAVITY_MS: i64 = 1000;
 const SOFT_DROP_MS: i64 = 60;
 
 const ZERO_WEIGHTS = Weights{
@@ -43,7 +43,7 @@ fn makeConfig(diff: Difficulty, trained: Weights) AiGameConfig {
         .Hard => .{
             .weights = trained,
             .depth = 5,
-            .beam_width = 20,
+            .beam_width = 8,
             .step_ms = 0,
         },
     };
@@ -87,6 +87,7 @@ pub fn main() !void {
     var last_gravity: i64 = std.time.milliTimestamp();
     var last_ai_step: i64 = std.time.milliTimestamp();
     var show_winner: bool = false;
+    var seed_idx: u64 = 0;
 
     while (!rl.windowShouldClose()) {
         const now = std.time.milliTimestamp();
@@ -106,8 +107,9 @@ pub fn main() !void {
                 if (renderer.drawDifficultyFrame()) |diff| {
                     ai_cfg = makeConfig(diff, trained);
 
-                    player = GameState.init(SEED);
-                    ai = GameState.init(SEED);
+                    player = GameState.init(SEED + seed_idx);
+                    ai = GameState.init(SEED + seed_idx);
+                    seed_idx += 1;
                     last_gravity = now;
                     last_ai_step = now;
                     show_winner = false;
