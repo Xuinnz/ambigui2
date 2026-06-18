@@ -98,4 +98,17 @@ pub fn build(b: *std.Build) !void {
     const bench_cmd = b.addRunArtifact(bench_exe);
     const bench_step = b.step("bench", "Benchmark AI across seeds");
     bench_step.dependOn(&bench_cmd.step);
+
+    const metrics_exe = b.addExecutable(.{
+        .name = "metrics",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/metrics.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+        }),
+    });
+    b.installArtifact(metrics_exe);
+    const metrics_cmd = b.addRunArtifact(metrics_exe);
+    const metrics_step = b.step("metrics", "Measure performance metrics");
+    metrics_step.dependOn(&metrics_cmd.step);
 }

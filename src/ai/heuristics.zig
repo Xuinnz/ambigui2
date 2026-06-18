@@ -34,6 +34,10 @@ pub fn loadTrainedWeights() !void {
     TRAINED_WEIGHTS = parsed.value;
 }
 
+pub fn getActiveWeights() Weights {
+    try loadTrainedWeights();
+}
+
 pub fn score(state: *const GameState, weights: *const Weights) f32 {
     return state.evaluate(weights);
 }

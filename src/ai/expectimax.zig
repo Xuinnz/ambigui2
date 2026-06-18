@@ -12,6 +12,7 @@ pub const SearchOptions = struct {
     depth: u32,
     beam_width: usize,
 };
+pub var node_count: u64 = 0;
 
 //game over has biggest penalty, line clear will give reward
 const GAME_OVER_SCORE: f32 = -1.0e9;
@@ -20,7 +21,7 @@ const LINE_CLEAR_REWARD: f32 = 1.0;
 const MoveArrayType = @typeInfo(MoveList).@"struct".fields[0].type;
 const MAX_MOVES: usize = @typeInfo(MoveArrayType).array.len;
 
-//for the scoreLeaf. it will list all the moves and their score
+//used by beam pruning
 const MoveScore = struct {
     move: Move,
     score: f32,
@@ -86,6 +87,7 @@ pub fn bestMoveWithOptions(state: *const GameState, weights: *const Weights, opt
 //this is used to simulate the future timelines
 fn maxNode(state: *const GameState, weights: *const Weights, depth: u32, beam_width: usize, prev_lines: u32) f32 {
     if (state.game_over) return GAME_OVER_SCORE;
+    node_count += 1;
     if (depth == 0) return scoreLeaf(state, weights, prev_lines);
 
     const moves = state.getMoves();
@@ -134,6 +136,7 @@ fn maxNode(state: *const GameState, weights: *const Weights, depth: u32, beam_wi
 //we use this to calculate the Estimated Values of each moves.
 fn chanceNode(state: *const GameState, move: *const Move, weights: *const Weights, depth: u32, beam_width: usize) f32 {
     if (state.game_over) return GAME_OVER_SCORE;
+    node_count += 1;
 
     //we get the probability of state_a and state_b
     const prob_a = state.current_piece.prob_a;
