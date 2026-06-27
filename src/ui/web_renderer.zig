@@ -70,10 +70,9 @@ pub const AiGameConfig = struct {
 };
 
 // ── Asset paths ────────────────────────────────────────────────────────────────
-const LANDING_ASSET: [:0]const u8 = "assets/landing_page/resized_main_page.png";
-const DIFFICULTY_ASSET: [:0]const u8 = "assets/landing_page/difficulty_page.png";
-const BLOCK_BOX_ASSET: [:0]const u8 = "assets/vs_ai/block.png";
-const VS_AI_FRAMES_DIR: []const u8 = "assets/vs_ai/frames";
+const LANDING_ASSET: [:0]const u8 = "web-assets/resized_main_page.png";
+const DIFFICULTY_ASSET: [:0]const u8 = "web-assets/difficulty_page.png";
+const BLOCK_BOX_ASSET: [:0]const u8 = "web-assets/block.png";
 const BG_FRAME_DURATION: f32 = 1.0 / 24.0;
 
 // ── Asset globals ──────────────────────────────────────────────────────────────
