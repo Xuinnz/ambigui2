@@ -111,4 +111,25 @@ pub fn build(b: *std.Build) !void {
     const metrics_cmd = b.addRunArtifact(metrics_exe);
     const metrics_step = b.step("metrics", "Measure performance metrics");
     metrics_step.dependOn(&metrics_cmd.step);
+
+    // ── WASM Build Target ─────────────────────────────────────────────────────
+    const wasm_target = b.resolveTargetQuery(.{
+        .cpu_arch = .wasm32,
+        .os_tag = .freestanding,
+    });
+
+    const wasm = b.addObject(.{
+        .name = "game",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/web_main.zig"),
+            .target = wasm_target,
+            .optimize = .ReleaseSmall,
+        }),
+    });
+    wasm.root_module.addOptions("config", ai_options);
+    wasm.addIncludePath(b.path("libs/wasm/include"));
+
+    const wasm_step = b.step("wasm", "Build WASM object file");
+    const install_obj = b.addInstallFile(wasm.getEmittedBin(), "lib/game.o");
+    wasm_step.dependOn(&install_obj.step);
 }
