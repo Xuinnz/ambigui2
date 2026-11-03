@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 266" width="780" height="266" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" role="img">
+<title>Mean lines cleared per game by search setting</title>
+
+<style>
+  .surface { fill: #fcfcfb; }
+  .ink { fill: #0b0b0b; }
+  .ink-2 { fill: #52514e; }
+  .muted { fill: #898781; }
+  .grid { stroke: #e1e0d9; stroke-width: 1; }
+  .axis { stroke: #c3c2b7; stroke-width: 1; }
+  .s1 { fill: #2a78d6; }
+  .s1-line { stroke: #2a78d6; }
+  .s2-line { stroke: #eb6834; }
+  .before { fill: #898781; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .ink { fill: #f0efec; }
+    .ink-2 { fill: #c3c2b7; }
+    .grid { stroke: #2c2c2a; }
+    .axis { stroke: #383835; }
+    .s1 { fill: #3987e5; }
+    .s1-line { stroke: #3987e5; }
+    .s2-line { stroke: #d95926; }
+    .before { fill: #6e6d68; }
+  }
+</style>
+
+<rect class="surface" width="780" height="266" rx="8"/>
+<text class="ink" x="20.0" y="30.0" font-size="16" text-anchor="start" font-weight="bold">Lines cleared per game, by how far the AI looks ahead</text>
+<text class="ink-2" x="20.0" y="50.0" font-size="12" text-anchor="start" font-weight="normal">40 games per setting (seeds 1000-1039), each capped at 1000 pieces. Same trained weights for every row.</text>
+<line class="grid" x1="190.0" x2="190.0" y1="64" y2="220"/>
+<text class="muted" x="190.0" y="238.0" font-size="12" text-anchor="middle" font-weight="normal">0</text>
+<line class="grid" x1="276.7" x2="276.7" y1="64" y2="220"/>
+<text class="muted" x="276.7" y="238.0" font-size="12" text-anchor="middle" font-weight="normal">20</text>
+<line class="grid" x1="363.3" x2="363.3" y1="64" y2="220"/>
+<text class="muted" x="363.3" y="238.0" font-size="12" text-anchor="middle" font-weight="normal">40</text>
+<line class="grid" x1="450.0" x2="450.0" y1="64" y2="220"/>
+<text class="muted" x="450.0" y="238.0" font-size="12" text-anchor="middle" font-weight="normal">60</text>
+<line class="grid" x1="536.7" x2="536.7" y1="64" y2="220"/>
+<text class="muted" x="536.7" y="238.0" font-size="12" text-anchor="middle" font-weight="normal">80</text>
+<line class="grid" x1="623.3" x2="623.3" y1="64" y2="220"/>
+<text class="muted" x="623.3" y="238.0" font-size="12" text-anchor="middle" font-weight="normal">100</text>
+<line class="grid" x1="710.0" x2="710.0" y1="64" y2="220"/>
+<text class="muted" x="710.0" y="238.0" font-size="12" text-anchor="middle" font-weight="normal">120</text>
+<line class="axis" x1="190" x2="190" y1="64" y2="220"/>
+<text class="ink-2" x="180.0" y="85.0" font-size="12" text-anchor="end" font-weight="normal">Greedy (1 piece)</text>
+<path class="s1" d="M190.0,70.0 h87.9 a4.0,4.0 0 0 1 4.0,4.0 v14.0 a4.0,4.0 0 0 1 -4.0,4.0 h-87.9 z"/>
+<text class="ink" x="287.9" y="85.0" font-size="12" text-anchor="start" font-weight="normal">21.2</text>
+<text class="ink-2" x="180.0" y="117.0" font-size="12" text-anchor="end" font-weight="normal">2 pieces</text>
+<path class="s1" d="M190.0,102.0 h129.5 a4.0,4.0 0 0 1 4.0,4.0 v14.0 a4.0,4.0 0 0 1 -4.0,4.0 h-129.5 z"/>
+<text class="ink" x="329.5" y="117.0" font-size="12" text-anchor="start" font-weight="normal">30.8</text>
+<text class="ink-2" x="180.0" y="149.0" font-size="12" text-anchor="end" font-weight="normal">1 piece + hold</text>
+<path class="s1" d="M190.0,134.0 h121.2 a4.0,4.0 0 0 1 4.0,4.0 v14.0 a4.0,4.0 0 0 1 -4.0,4.0 h-121.2 z"/>
+<text class="ink" x="321.2" y="149.0" font-size="12" text-anchor="start" font-weight="normal">28.9</text>
+<text class="ink-2" x="180.0" y="181.0" font-size="12" text-anchor="end" font-weight="normal">2 pieces + hold</text>
+<path class="s1" d="M190.0,166.0 h267.3 a4.0,4.0 0 0 1 4.0,4.0 v14.0 a4.0,4.0 0 0 1 -4.0,4.0 h-267.3 z"/>
+<text class="ink" x="467.3" y="181.0" font-size="12" text-anchor="start" font-weight="normal">62.6</text>
+<text class="ink-2" x="180.0" y="213.0" font-size="12" text-anchor="end" font-weight="normal">Hard (3 pieces + hold)</text>
+<path class="s1" d="M190.0,198.0 h452.7 a4.0,4.0 0 0 1 4.0,4.0 v14.0 a4.0,4.0 0 0 1 -4.0,4.0 h-452.7 z"/>
+<text class="ink" x="652.7" y="213.0" font-size="12" text-anchor="start" font-weight="normal">105.4</text>
+</svg>

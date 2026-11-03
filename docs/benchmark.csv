@@ -1,0 +1,9 @@
+version,search,mean_lines,mean_score,ms_per_move
+original,Greedy (1 piece),21.2,4150,0.07
+original,2 pieces,30.9,8175,1.21
+original,Hard (old depth 5),43.5,15485,21.73
+current,Greedy (1 piece),21.2,4158,0.03
+current,2 pieces,30.8,8148,0.64
+current,1 piece + hold,28.9,7150,0.07
+current,2 pieces + hold,62.6,35803,1.11
+current,Hard (3 pieces + hold),105.4,96375,8.15

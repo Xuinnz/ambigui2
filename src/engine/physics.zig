@@ -4,144 +4,115 @@ const piece_mod = @import("piece.zig");
 const Piece = piece_mod.Piece;
 const QuantumPiece = piece_mod.QuantumPiece;
 
+/// One 4-bit row of a piece, projected into board column space.
+/// Projection happens in a u32 so no block is ever silently shifted out of the word.
+pub const ProjectedRow = struct {
+    /// Bits that land on the 10 playable columns.
+    on_board: u16,
+    /// True if any block sits right of the last column.
+    off_right: bool,
+    /// True if any block sits left of column 0.
+    off_left: bool,
+
+    pub inline fn offBoard(self: ProjectedRow) bool {
+        return self.off_left or self.off_right;
+    }
+};
+
+/// Extracts row `row` (0 = top) of the piece's 4x4 matrix as a 4-bit value.
+/// Row 0 is stored in the highest 4 bits (bits 12-15), row 3 in the lowest.
+pub inline fn pieceRow(piece: *const Piece, row: usize) u16 {
+    const shift_amount: u4 = @intCast((Piece.BOUND_SIZE - 1 - row) * 4);
+    return (piece.matrix >> shift_amount) & 0x0F;
+}
+
+/// Shifts a 4-bit piece row to the piece's x offset.
+pub inline fn projectRow(piece_row: u16, x: i8) ProjectedRow {
+    std.debug.assert(x >= -@as(i8, Piece.BOUND_SIZE) and x <= @as(i8, Board.WIDTH + Piece.BOUND_SIZE));
+    const wide_row: u32 = piece_row;
+    if (x < 0) {
+        const shift: u5 = @intCast(-@as(i16, x));
+        const shifted = wide_row >> shift;
+        return .{
+            .on_board = @intCast(shifted & Board.ROW_MASK),
+            .off_right = false,
+            // Shifting back reveals whether a block fell off the left edge.
+            .off_left = (shifted << shift) != wide_row,
+        };
+    }
+    const shifted = wide_row << @as(u5, @intCast(x));
+    return .{
+        .on_board = @intCast(shifted & Board.ROW_MASK),
+        .off_right = (shifted & ~@as(u32, Board.ROW_MASK)) != 0,
+        .off_left = false,
+    };
+}
+
 /// Checks if a standard piece collides with the floor, walls, or locked board cells.
-/// Evaluates using 16-bit projection math to avoid expensive 2D array iterations.
+/// Evaluates using bit-row projection to avoid expensive 2D array iterations.
 pub fn checkCollision(board: *const Board, piece: *const Piece) bool {
-    var row: usize = 0;
-    // Cache the board height as an i16 to allow safe mathematical comparisons
-    // with the piece's Y coordinate, which can be negative during spawn.
+    // Cache the board height as an i16 to allow safe comparisons with the
+    // piece's Y coordinate, which can be negative during spawn.
     const board_height_i16: i16 = @intCast(Board.HEIGHT);
 
+    var row: usize = 0;
     while (row < Piece.BOUND_SIZE) : (row += 1) {
-        // --- EXTRACTION ---
-        // The piece matrix is a single u16 representing a 4x4 grid.
-        // Row 0 is stored in the highest 4 bits (bits 12-15).
-        // Row 3 is stored in the lowest 4 bits (bits 0-3).
-        // We calculate the shift to push the target row down to the lowest 4 bits.
-        const shift_amount: u4 = @intCast((Piece.BOUND_SIZE - 1 - row) * 4);
-
-        // Bitwise AND with 0x0F (binary 0000 1111) isolates just that 4-bit row.
-        const piece_row: u16 = (piece.matrix >> shift_amount) & 0x0F;
-
-        // Optimization: If this specific row of the 4x4 bounding box has no blocks, skip it.
+        const piece_row = pieceRow(piece, row);
+        // If this row of the 4x4 bounding box has no blocks, skip it.
         if (piece_row == 0) continue;
 
-        // Calculate the absolute vertical position of this 4-bit slice on the game board.
-        const board_y: i16 = @as(i16, piece.y) + @as(i16, @intCast(row));
+        const projected = projectRow(piece_row, piece.x);
+        // Wall collision: a block left of column 0 or right of column 9.
+        if (projected.offBoard()) return true;
 
-        // --- VERTICAL COLLISIONS ---
-        // 1. Floor collision: If this slice of the piece hits the floor, stop.
+        const board_y: i16 = @as(i16, piece.y) + @as(i16, @intCast(row));
+        // Floor collision.
         if (board_y >= board_height_i16) return true;
-        // 2. Ceiling bypass: If this slice is still above the visible board (spawning),
-        // it cannot possibly collide with locked blocks or the floor yet.
+        // Above the visible board (spawning): cannot hit locked blocks yet.
         if (board_y < 0) continue;
 
-        var projected_piece_row: u16 = 0;
-        const x_i16: i16 = @as(i16, piece.x);
-
-        // --- HORIZONTAL PROJECTION & WALL COLLISIONS ---
-        if (x_i16 < 0) {
-            // Negative X means the piece is partially off the LEFT side of the screen.
-            // We shift it RIGHT in bit-space to align it with the board's 0-index.
-            const shift_right_i16: i16 = -x_i16;
-            std.debug.assert(shift_right_i16 <= 15); // Fail-fast memory protection
-            const shift_right: u4 = @intCast(shift_right_i16);
-
-            // Shift the shadow right. If a block was pushed off the edge of the u16, it is permanently lost.
-            projected_piece_row = piece_row >> shift_right;
-
-            // Left Wall Collision Logic:
-            // We try to shift the shadow back to the left. If it does not perfectly match
-            // the original piece_row, it means a physical block was chopped off during the right shift.
-            // This proves the physical block tried to pass through the left wall.
-            if ((projected_piece_row << shift_right) != piece_row) return true;
-        } else {
-            // Positive X means the piece is safely within or passing the right wall.
-            // We shift it LEFT in bit-space to align it with its physical column on the board.
-            std.debug.assert(x_i16 <= 15);
-            const shift_left: u4 = @intCast(x_i16);
-            projected_piece_row = piece_row << shift_left;
-        }
-
-        // Right Wall Collision Logic:
-        // The playable board is 10 bits wide. ~Board.ROW_MASK isolates the 6 padding bits.
-        // If our projected shadow overlaps with any padding bits, it has breached the right wall.
-        if ((projected_piece_row & ~Board.ROW_MASK) != 0) return true;
-
-        // --- LOCKED BLOCK COLLISION ---
-        // Both the board row and the projected piece row are now perfectly aligned in memory.
-        // A single bitwise AND checks all 10 columns for overlapping 1s simultaneously.
-        const board_row_idx: usize = @intCast(board_y);
-        if ((board.grid[board_row_idx] & projected_piece_row) != 0) return true;
+        // A single bitwise AND checks all 10 columns for overlap simultaneously.
+        if ((board.grid[@intCast(board_y)] & projected.on_board) != 0) return true;
     }
 
-    // If all 4 rows of the piece clear the checks, the space is empty.
     return false;
 }
 
 /// Checks only left/right wall overlap for a piece.
 pub fn checkWallCollision(piece: *const Piece) bool {
     var row: usize = 0;
-
     while (row < Piece.BOUND_SIZE) : (row += 1) {
-        const shift_amount: u4 = @intCast((Piece.BOUND_SIZE - 1 - row) * 4);
-        const piece_row: u16 = (piece.matrix >> shift_amount) & 0x0F;
-
+        const piece_row = pieceRow(piece, row);
         if (piece_row == 0) continue;
-
-        const x_i16: i16 = @as(i16, piece.x);
-        if (x_i16 < 0) {
-            const shift_right_i16: i16 = -x_i16;
-            std.debug.assert(shift_right_i16 <= 15);
-            const shift_right: u4 = @intCast(shift_right_i16);
-            const projected_piece_row: u16 = piece_row >> shift_right;
-
-            if ((projected_piece_row << shift_right) != piece_row) return true;
-        } else {
-            std.debug.assert(x_i16 <= 15);
-            const shift_left: u4 = @intCast(x_i16);
-            const projected_piece_row: u16 = piece_row << shift_left;
-            if ((projected_piece_row & ~Board.ROW_MASK) != 0) return true;
-        }
+        if (projectRow(piece_row, piece.x).offBoard()) return true;
     }
-
     return false;
 }
 
 /// Checks collision against the floor and locked blocks, ignoring wall overlap.
+/// Used for I pieces, which may hang over a wall (at the cost of a penalty line)
+/// as long as at least one block stays on the board.
 pub fn checkCollisionIgnoreWalls(board: *const Board, piece: *const Piece) bool {
-    var row: usize = 0;
     const board_height_i16: i16 = @intCast(Board.HEIGHT);
+    var any_on_board = false;
 
+    var row: usize = 0;
     while (row < Piece.BOUND_SIZE) : (row += 1) {
-        const shift_amount: u4 = @intCast((Piece.BOUND_SIZE - 1 - row) * 4);
-        const piece_row: u16 = (piece.matrix >> shift_amount) & 0x0F;
-
+        const piece_row = pieceRow(piece, row);
         if (piece_row == 0) continue;
+
+        const projected = projectRow(piece_row, piece.x);
+        if (projected.on_board != 0) any_on_board = true;
 
         const board_y: i16 = @as(i16, piece.y) + @as(i16, @intCast(row));
         if (board_y >= board_height_i16) return true;
         if (board_y < 0) continue;
 
-        var projected_piece_row: u16 = 0;
-        const x_i16: i16 = @as(i16, piece.x);
-        if (x_i16 < 0) {
-            const shift_right_i16: i16 = -x_i16;
-            std.debug.assert(shift_right_i16 <= 15);
-            const shift_right: u4 = @intCast(shift_right_i16);
-            projected_piece_row = piece_row >> shift_right;
-        } else {
-            std.debug.assert(x_i16 <= 15);
-            const shift_left: u4 = @intCast(x_i16);
-            projected_piece_row = piece_row << shift_left;
-        }
-
-        const board_row_idx: usize = @intCast(board_y);
-        const masked_projected: u16 = projected_piece_row & Board.ROW_MASK;
-        if ((board.grid[board_row_idx] & masked_projected) != 0) return true;
+        if ((board.grid[@intCast(board_y)] & projected.on_board) != 0) return true;
     }
 
-    return false;
+    // A piece pushed completely past a wall has left the playfield.
+    return !any_on_board;
 }
 
 /// Checks collision for a Dual-State piece.
@@ -153,4 +124,62 @@ pub inline fn checkQuantumCollision(board: *const Board, q_piece: *const Quantum
 
     return checkCollision(board, &q_piece.state_a) or
         checkCollision(board, &q_piece.state_b);
+}
+
+test "projectRow keeps every block inside the u32" {
+    // A vertical I row (single block in column 2) pushed far right must be
+    // reported as off-board instead of vanishing.
+    const projected = projectRow(0b0100, 14);
+    try std.testing.expectEqual(@as(u16, 0), projected.on_board);
+    try std.testing.expect(projected.off_right);
+}
+
+test "projectRow detects left clipping" {
+    const projected = projectRow(0b0011, -1);
+    try std.testing.expectEqual(@as(u16, 0b0001), projected.on_board);
+    try std.testing.expect(projected.off_left);
+}
+
+test "checkCollision walls, floor and blocks" {
+    var board = Board.init();
+    var piece = Piece.init(.O);
+
+    piece.y = 0;
+    try std.testing.expect(!checkCollision(&board, &piece));
+
+    piece.x = -2;
+    try std.testing.expect(checkCollision(&board, &piece));
+    piece.x = 8;
+    try std.testing.expect(checkCollision(&board, &piece));
+    piece.x = 3;
+
+    piece.y = 18;
+    try std.testing.expect(checkCollision(&board, &piece));
+    piece.y = 17;
+    try std.testing.expect(!checkCollision(&board, &piece));
+
+    board.grid[19] = @as(u16, 1) << 4;
+    try std.testing.expect(checkCollision(&board, &piece));
+}
+
+test "checkCollisionIgnoreWalls rejects a piece fully past the wall" {
+    const board = Board.init();
+    var vertical_i = Piece.init(.I);
+    vertical_i.rotateCW();
+    vertical_i.y = 0;
+
+    // Column 2 of the box is the block column; x = 7 puts it in column 9.
+    vertical_i.x = 7;
+    try std.testing.expect(!checkCollisionIgnoreWalls(&board, &vertical_i));
+    vertical_i.x = 8;
+    try std.testing.expect(checkCollisionIgnoreWalls(&board, &vertical_i));
+    vertical_i.x = 14;
+    try std.testing.expect(checkCollisionIgnoreWalls(&board, &vertical_i));
+
+    // A horizontal I may hang over the right wall while part of it is on board.
+    var horizontal_i = Piece.init(.I);
+    horizontal_i.y = 0;
+    horizontal_i.x = 8;
+    try std.testing.expect(!checkCollisionIgnoreWalls(&board, &horizontal_i));
+    try std.testing.expect(checkWallCollision(&horizontal_i));
 }

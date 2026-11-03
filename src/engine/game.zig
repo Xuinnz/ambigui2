@@ -2,19 +2,28 @@ const std = @import("std");
 const Board = @import("board.zig").Board;
 const physics = @import("physics.zig");
 const piece_mod = @import("piece.zig");
+const kicks = @import("kicks.zig");
+const bag_mod = @import("bag.zig");
+const eval = @import("eval.zig");
 const ShapeType = piece_mod.ShapeType;
 const Piece = piece_mod.Piece;
 const QuantumPiece = piece_mod.QuantumPiece;
+const Kick = kicks.Kick;
+const Bag = bag_mod.Bag;
 
-const BAG_SIZE: usize = @typeInfo(ShapeType).@"enum".fields.len;
-const ALL_SHAPES: [BAG_SIZE]ShapeType = .{ .I, .O, .T, .S, .Z, .J, .L };
+pub const Weights = eval.Weights;
+pub const EvalCache = eval.EvalCache;
+pub const RotationDirection = kicks.Direction;
 
-const Kick = struct { dx: i8, dy: i8 };
 const LockBranch = enum { a, b };
 
 const MAX_MOVES: usize = 128;
 const LOCK_DELAY_TICKS: u8 = 2;
+/// Rotations reset the lock delay at most this many times per piece, so a
+/// player cannot stall forever by spinning a grounded piece.
+pub const MAX_LOCK_RESETS: u8 = 15;
 
+/// A placement for the current piece: where each state comes to rest.
 pub const Move = struct {
     state_a: Piece,
     state_b: Piece,
@@ -22,6 +31,9 @@ pub const Move = struct {
     b_valid: bool,
     wall_out_a: bool,
     wall_out_b: bool,
+    /// Swap with the hold slot before placing. The states above are then
+    /// positions of the piece that comes out of hold (or the next piece).
+    use_hold: bool = false,
 };
 
 pub const MoveList = struct {
@@ -37,190 +49,11 @@ pub const MoveList = struct {
         self.items[self.len] = move;
         self.len += 1;
     }
-};
 
-test "EvalCache recompute empty board" {
-    var board = Board.init();
-    var cache = EvalCache.init();
-    cache.recompute(&board);
-
-    try std.testing.expectEqual(@as(u16, 0), cache.hole_count);
-    try std.testing.expectEqual(@as(u16, 0), cache.bumpiness);
-    try std.testing.expectEqual(@as(u16, 0), cache.aggregate_height);
-
-    for (cache.col_heights) |height| {
-        try std.testing.expectEqual(@as(u8, 0), height);
-    }
-}
-
-test "EvalCache recompute metrics" {
-    var board = Board.init();
-    board.grid[15] = (@as(u16, 1) << 3);
-    board.grid[17] = (@as(u16, 1) << 1);
-    board.grid[18] = (@as(u16, 1) << 0);
-    board.grid[19] = (@as(u16, 1) << 0) | (@as(u16, 1) << 3);
-
-    var cache = EvalCache.init();
-    cache.recompute(&board);
-
-    try std.testing.expectEqual(@as(u8, 2), cache.col_heights[0]);
-    try std.testing.expectEqual(@as(u8, 3), cache.col_heights[1]);
-    try std.testing.expectEqual(@as(u8, 0), cache.col_heights[2]);
-    try std.testing.expectEqual(@as(u8, 5), cache.col_heights[3]);
-    try std.testing.expectEqual(@as(u8, 0), cache.col_heights[4]);
-
-    try std.testing.expectEqual(@as(u16, 5), cache.hole_count);
-    try std.testing.expectEqual(@as(u16, 14), cache.bumpiness);
-    try std.testing.expectEqual(@as(u16, 10), cache.aggregate_height);
-}
-
-pub const EvalCache = struct {
-    col_heights: [Board.WIDTH]u8,
-    hole_count: u16,
-    bumpiness: u16,
-    aggregate_height: u16,
-    wells: u16,
-    row_transitions: u16,
-    col_transitions: u16,
-
-    pub fn init() EvalCache {
-        return .{
-            .col_heights = [_]u8{0} ** Board.WIDTH,
-            .hole_count = 0,
-            .bumpiness = 0,
-            .aggregate_height = 0,
-            .wells = 0,
-            .row_transitions = 0,
-            .col_transitions = 0,
-        };
-    }
-
-    pub fn recompute(self: *EvalCache, board: *const Board) void {
-        self.hole_count = 0;
-        self.bumpiness = 0;
-        self.aggregate_height = 0;
-        self.wells = 0;
-        self.row_transitions = 0;
-        self.col_transitions = 0;
-
-        // Heights and holes
-        var col: usize = 0;
-        while (col < Board.WIDTH) : (col += 1) {
-            const col_mask: u16 = @as(u16, 1) << @as(u4, @intCast(col));
-            var height: u8 = 0;
-            var seen_block = false;
-
-            var row: usize = 0;
-            while (row < Board.HEIGHT) : (row += 1) {
-                const row_masked = board.grid[row] & Board.ROW_MASK;
-                const is_block = (row_masked & col_mask) != 0;
-                if (is_block) {
-                    if (!seen_block) {
-                        seen_block = true;
-                        height = @as(u8, @intCast(Board.HEIGHT - row));
-                    }
-                } else if (seen_block) {
-                    self.hole_count += 1;
-                }
-            }
-
-            self.col_heights[col] = height;
-            self.aggregate_height += @as(u16, height);
-        }
-
-        // Bumpiness
-        col = 0;
-        while (col + 1 < Board.WIDTH) : (col += 1) {
-            const left = @as(i16, self.col_heights[col]);
-            const right = @as(i16, self.col_heights[col + 1]);
-            self.bumpiness += @as(u16, @intCast(@abs(left - right)));
-        }
-
-        // Wells
-        col = 0;
-        while (col < Board.WIDTH) : (col += 1) {
-            const left_h: i16 = if (col == 0)
-                @as(i16, Board.HEIGHT)
-            else
-                @as(i16, self.col_heights[col - 1]);
-            const right_h: i16 = if (col == Board.WIDTH - 1)
-                @as(i16, Board.HEIGHT)
-            else
-                @as(i16, self.col_heights[col + 1]);
-            const h: i16 = @as(i16, self.col_heights[col]);
-            const well_depth = @min(left_h, right_h) - h;
-            if (well_depth > 0) self.wells += @as(u16, @intCast(well_depth));
-        }
-
-        // Row transitions
-        var row: usize = 0;
-        while (row < Board.HEIGHT) : (row += 1) {
-            const r = board.grid[row] & Board.ROW_MASK;
-            var prev_filled = true; // left wall = filled
-            col = 0;
-            while (col < Board.WIDTH) : (col += 1) {
-                const filled = (r & (@as(u16, 1) << @as(u4, @intCast(col)))) != 0;
-                if (filled != prev_filled) self.row_transitions += 1;
-                prev_filled = filled;
-            }
-            if (!prev_filled) self.row_transitions += 1; // right wall
-        }
-
-        // Column transitions
-        col = 0;
-        while (col < Board.WIDTH) : (col += 1) {
-            const col_mask: u16 = @as(u16, 1) << @as(u4, @intCast(col));
-            var prev_filled = true; // floor = filled
-            var r: usize = Board.HEIGHT;
-            while (r > 0) {
-                r -= 1;
-                const filled = (board.grid[r] & col_mask) != 0;
-                if (filled != prev_filled) self.col_transitions += 1;
-                prev_filled = filled;
-            }
-        }
+    pub fn slice(self: *const MoveList) []const Move {
+        return self.items[0..self.len];
     }
 };
-
-pub const Weights = struct {
-    w_aggregate: f32,
-    w_holes: f32,
-    w_bumpiness: f32,
-    w_wells: f32,
-    w_row_transitions: f32,
-    w_col_transitions: f32,
-};
-
-const JLSTZ_KICKS_CW: [4][5]Kick = .{
-    .{ .{ .dx = 0, .dy = 0 }, .{ .dx = -1, .dy = 0 }, .{ .dx = -1, .dy = -1 }, .{ .dx = 0, .dy = 2 }, .{ .dx = -1, .dy = 2 } },
-    .{ .{ .dx = 0, .dy = 0 }, .{ .dx = 1, .dy = 0 }, .{ .dx = 1, .dy = -1 }, .{ .dx = 0, .dy = 2 }, .{ .dx = 1, .dy = 2 } },
-    .{ .{ .dx = 0, .dy = 0 }, .{ .dx = 1, .dy = 0 }, .{ .dx = 1, .dy = 1 }, .{ .dx = 0, .dy = -2 }, .{ .dx = 1, .dy = -2 } },
-    .{ .{ .dx = 0, .dy = 0 }, .{ .dx = -1, .dy = 0 }, .{ .dx = -1, .dy = 1 }, .{ .dx = 0, .dy = -2 }, .{ .dx = -1, .dy = -2 } },
-};
-
-const I_KICKS_CW: [4][5]Kick = .{
-    .{ .{ .dx = 0, .dy = 0 }, .{ .dx = -2, .dy = 0 }, .{ .dx = 1, .dy = 0 }, .{ .dx = -2, .dy = 1 }, .{ .dx = 1, .dy = -2 } },
-    .{ .{ .dx = 0, .dy = 0 }, .{ .dx = -1, .dy = 0 }, .{ .dx = 2, .dy = 0 }, .{ .dx = -1, .dy = -2 }, .{ .dx = 2, .dy = 1 } },
-    .{ .{ .dx = 0, .dy = 0 }, .{ .dx = 2, .dy = 0 }, .{ .dx = -1, .dy = 0 }, .{ .dx = 2, .dy = -1 }, .{ .dx = -1, .dy = 2 } },
-    .{ .{ .dx = 0, .dy = 0 }, .{ .dx = 1, .dy = 0 }, .{ .dx = -2, .dy = 0 }, .{ .dx = 1, .dy = 2 }, .{ .dx = -2, .dy = -1 } },
-};
-
-const ZERO_KICK: [1]Kick = .{.{ .dx = 0, .dy = 0 }};
-
-fn kickTableForShape(shape: ShapeType, rot: u2) []const Kick {
-    return switch (shape) {
-        .O => ZERO_KICK[0..],
-        .I => I_KICKS_CW[rot][0..],
-        else => JLSTZ_KICKS_CW[rot][0..],
-    };
-}
-
-fn kickInList(kick: Kick, list: []const Kick) bool {
-    for (list) |entry| {
-        if (entry.dx == kick.dx and entry.dy == kick.dy) return true;
-    }
-    return false;
-}
 
 fn checkStateCollision(self: *const GameState, piece: *const Piece) bool {
     return if (piece.shape_type == .I)
@@ -239,34 +72,36 @@ fn tryKick(self: *GameState, old_a: Piece, old_b: Piece, kick: Kick) bool {
         !checkStateCollision(self, &self.current_piece.state_b);
 }
 
-fn tryKickSingle(self: *GameState, piece: *Piece, old: Piece, kick: Kick) bool {
-    piece.x = old.x + kick.dx;
-    piece.y = old.y + kick.dy;
-    return !checkStateCollision(self, piece);
+fn rotatePiece(piece: *Piece, dir: RotationDirection) void {
+    switch (dir) {
+        .cw => piece.rotateCW(),
+        .ccw => piece.rotateCCW(),
+    }
 }
 
-fn rotateSingleCW(self: *GameState, piece: *Piece) bool {
+fn rotateSingle(self: *GameState, piece: *Piece, dir: RotationDirection) bool {
     const old = piece.*;
-    const old_rot = old.rotation_idx;
-    piece.rotateCW();
+    rotatePiece(piece, dir);
 
-    const kicks = kickTableForShape(old.shape_type, old_rot);
-    for (kicks) |kick| {
-        if (tryKickSingle(self, piece, old, kick)) return true;
+    const kick_list = kicks.forRotation(old.shape_type, old.rotation_idx, dir);
+    for (kick_list.slice()) |kick| {
+        piece.x = old.x + kick.dx;
+        piece.y = old.y + kick.dy;
+        if (!checkStateCollision(self, piece)) return true;
     }
 
     piece.* = old;
     return false;
 }
 
+/// Writes a piece's blocks into the board. Returns true if any block is above
+/// the visible board (a lock out).
 fn projectPiece(self: *GameState, piece: Piece, wall_out: bool) bool {
     var lock_out = false;
+
     var row: usize = 0;
-
     while (row < Piece.BOUND_SIZE) : (row += 1) {
-        const shift_amount: u4 = @intCast((Piece.BOUND_SIZE - 1 - row) * 4);
-        const piece_row: u16 = (piece.matrix >> shift_amount) & 0x0F;
-
+        const piece_row = physics.pieceRow(&piece, row);
         if (piece_row == 0) continue;
 
         const board_y: i16 = @as(i16, piece.y) + @as(i16, @intCast(row));
@@ -276,74 +111,14 @@ fn projectPiece(self: *GameState, piece: Piece, wall_out: bool) bool {
         }
         if (board_y >= @as(i16, @intCast(Board.HEIGHT))) continue;
 
-        var projected_row: u16 = 0;
-        const x_i16: i16 = @as(i16, piece.x);
-        if (x_i16 < 0) {
-            const shift_right_i16: i16 = -x_i16;
-            std.debug.assert(shift_right_i16 <= 15);
-            const shift_right: u4 = @intCast(shift_right_i16);
-            projected_row = piece_row >> shift_right;
-        } else {
-            std.debug.assert(x_i16 <= 15);
-            const shift_left: u4 = @intCast(x_i16);
-            projected_row = piece_row << shift_left;
-        }
+        const projected = physics.projectRow(piece_row, piece.x);
+        // Only an I piece may hang over a wall; its overhanging blocks are dropped.
+        std.debug.assert(!projected.offBoard() or (piece.shape_type == .I and wall_out));
 
-        if (piece.shape_type == .I and wall_out) {
-            projected_row &= Board.ROW_MASK;
-        } else {
-            std.debug.assert((projected_row & ~Board.ROW_MASK) == 0);
-        }
-
-        const b_y_usize: usize = @intCast(board_y);
-        const old_row: u16 = self.board.grid[b_y_usize] & Board.ROW_MASK;
-        const new_row: u16 = old_row | projected_row;
-        if (new_row != old_row) {
-            self.board.grid[b_y_usize] = new_row;
-        }
+        self.board.grid[@intCast(board_y)] |= projected.on_board;
     }
 
     return lock_out;
-}
-
-fn unprojectPiece(self: *GameState, piece: Piece, wall_out: bool) void {
-    var row: usize = 0;
-
-    while (row < Piece.BOUND_SIZE) : (row += 1) {
-        const shift_amount: u4 = @intCast((Piece.BOUND_SIZE - 1 - row) * 4);
-        const piece_row: u16 = (piece.matrix >> shift_amount) & 0x0F;
-
-        if (piece_row == 0) continue;
-
-        const board_y: i16 = @as(i16, piece.y) + @as(i16, @intCast(row));
-        if (board_y < 0 or board_y >= @as(i16, @intCast(Board.HEIGHT))) continue;
-
-        var projected_row: u16 = 0;
-        const x_i16: i16 = @as(i16, piece.x);
-        if (x_i16 < 0) {
-            const shift_right_i16: i16 = -x_i16;
-            std.debug.assert(shift_right_i16 <= 15);
-            const shift_right: u4 = @intCast(shift_right_i16);
-            projected_row = piece_row >> shift_right;
-        } else {
-            std.debug.assert(x_i16 <= 15);
-            const shift_left: u4 = @intCast(x_i16);
-            projected_row = piece_row << shift_left;
-        }
-
-        if (piece.shape_type == .I and wall_out) {
-            projected_row &= Board.ROW_MASK;
-        } else {
-            std.debug.assert((projected_row & ~Board.ROW_MASK) == 0);
-        }
-
-        const b_y_usize: usize = @intCast(board_y);
-        const old_row: u16 = self.board.grid[b_y_usize] & Board.ROW_MASK;
-        const new_row: u16 = old_row & ~projected_row;
-        if (new_row != old_row) {
-            self.board.grid[b_y_usize] = new_row;
-        }
-    }
 }
 
 /// Defines the terminal conditions for a game session.
@@ -363,9 +138,10 @@ pub const GameState = struct {
     held_piece: ?QuantumPiece,
     hold_used: bool,
     lock_delay_counter: u8,
+    lock_resets: u8,
     rng: std.Random.Xoshiro256,
-    shape_bag: [BAG_SIZE]ShapeType,
-    bag_index: usize,
+    bag: Bag,
+    pieces_generated: u32,
     score: u32,
     lines_cleared: u32,
     level: u32,
@@ -383,9 +159,10 @@ pub const GameState = struct {
             .held_piece = null,
             .hold_used = false,
             .lock_delay_counter = 0,
+            .lock_resets = 0,
             .rng = std.Random.Xoshiro256.init(seed),
-            .shape_bag = undefined,
-            .bag_index = BAG_SIZE,
+            .bag = Bag.init(),
+            .pieces_generated = 0,
             .score = 0,
             .lines_cleared = 0,
             .level = 0,
@@ -393,7 +170,6 @@ pub const GameState = struct {
             .top_out_reason = null,
         };
 
-        state.refillBag();
         state.next_piece = state.generateQuantumPiece();
         state.spawnNextPiece();
         state.eval_cache.recompute(&state.board);
@@ -406,8 +182,13 @@ pub const GameState = struct {
     }
 
     pub fn evaluate(self: *const GameState, weights: *const Weights) f32 {
-        const c = &self.eval_cache;
-        return weights.w_aggregate * @as(f32, @floatFromInt(c.aggregate_height)) + weights.w_holes * @as(f32, @floatFromInt(c.hole_count)) + weights.w_bumpiness * @as(f32, @floatFromInt(c.bumpiness)) + weights.w_wells * @as(f32, @floatFromInt(c.wells)) + weights.w_row_transitions * @as(f32, @floatFromInt(c.row_transitions)) + weights.w_col_transitions * @as(f32, @floatFromInt(c.col_transitions));
+        return self.eval_cache.evaluate(weights);
+    }
+
+    /// Milliseconds between gravity ticks; speeds up 15% per level, floored at 100ms.
+    pub fn gravityIntervalMs(self: *const GameState) i64 {
+        const factor = std.math.pow(f32, 0.85, @floatFromInt(self.level));
+        return @max(100, @as(i64, @intFromFloat(1000.0 * factor)));
     }
 
     /// Returns the projected landing position for a piece without mutating state.
@@ -468,21 +249,8 @@ pub const GameState = struct {
                 if (!a_valid and !b_valid) continue;
 
                 // Drop each state independently to its own resting position
-                var drop_a = probe_a;
-                if (a_valid) {
-                    while (!checkStateCollision(self, &drop_a)) {
-                        drop_a.y += 1;
-                    }
-                    drop_a.y -= 1;
-                }
-
-                var drop_b = probe_b;
-                if (b_valid) {
-                    while (!checkStateCollision(self, &drop_b)) {
-                        drop_b.y += 1;
-                    }
-                    drop_b.y -= 1;
-                }
+                const drop_a = if (a_valid) self.projectGhostPiece(&probe_a) else probe_a;
+                const drop_b = if (b_valid) self.projectGhostPiece(&probe_b) else probe_b;
 
                 const wall_out_a = if (a_valid) physics.checkWallCollision(&drop_a) else false;
                 const wall_out_b = if (b_valid) physics.checkWallCollision(&drop_b) else false;
@@ -501,60 +269,22 @@ pub const GameState = struct {
         return moves;
     }
 
-    fn refillBag(self: *GameState) void {
-        self.shape_bag = ALL_SHAPES;
-
-        const random = self.rng.random();
-        var i: usize = BAG_SIZE - 1;
-        while (i > 0) : (i -= 1) {
-            const j = random.intRangeLessThan(usize, 0, i + 1);
-            std.mem.swap(ShapeType, &self.shape_bag[i], &self.shape_bag[j]);
-        }
-
-        self.bag_index = 0;
-    }
-
-    fn drawFromBag(self: *GameState) ShapeType {
-        if (self.bag_index >= BAG_SIZE) {
-            self.refillBag();
-        }
-
-        const shape = self.shape_bag[self.bag_index];
-        self.bag_index += 1;
-        return shape;
-    }
-
-    fn resolveSecondDuplicate(self: *GameState, exclude: ShapeType) ShapeType {
-        std.debug.assert(self.bag_index > 0);
-        const consumed_idx = self.bag_index - 1;
-
-        var i: usize = self.bag_index;
-        while (i < BAG_SIZE) : (i += 1) {
-            if (self.shape_bag[i] == exclude) continue;
-
-            const chosen = self.shape_bag[i];
-            self.shape_bag[i] = self.shape_bag[consumed_idx];
-            self.shape_bag[consumed_idx] = chosen;
-            return chosen;
-        }
-
-        @panic("resolveSecondDuplicate: no valid non-duplicate found in bag — invariant broken");
-    }
-
     fn generateQuantumPiece(self: *GameState) QuantumPiece {
-        const shape_a = self.drawFromBag();
-        var shape_b = self.drawFromBag();
+        const random = self.rng.random();
+        const shape_a = self.bag.draw(random);
+        var shape_b = self.bag.draw(random);
 
         // Invariant: A quantum piece must comprise two distinct deterministic states.
         // With a 7-bag, equality only occurs at bag boundaries, so we swap in
         // the next distinct candidate from the same shuffled bag segment.
         if (shape_a == shape_b) {
-            shape_b = self.resolveSecondDuplicate(shape_a);
+            shape_b = self.bag.redrawExcluding(shape_a);
         }
 
-        const random = self.rng.random();
         const prob = 0.1 + (random.float(f32) * 0.8);
-        return QuantumPiece.init(shape_a, shape_b, prob);
+        const serial = self.pieces_generated;
+        self.pieces_generated += 1;
+        return QuantumPiece.init(shape_a, shape_b, prob, serial);
     }
 
     fn canMovePieceBy(self: *const GameState, piece: *const Piece, dx: i8, dy: i8) bool {
@@ -588,6 +318,7 @@ pub const GameState = struct {
         self.current_piece.locked_a = false;
         self.current_piece.locked_b = false;
         self.lock_delay_counter = 0;
+        self.lock_resets = 0;
 
         if (physics.checkQuantumCollision(&self.board, &self.current_piece)) {
             self.game_over = true;
@@ -607,8 +338,14 @@ pub const GameState = struct {
         self.prepareCurrentPiece();
     }
 
+    /// True if hold may be used right now (once per piece, before any state locks).
+    pub fn canHold(self: *const GameState) bool {
+        return !self.game_over and !self.hold_used and
+            !self.current_piece.locked_a and !self.current_piece.locked_b;
+    }
+
     pub fn tryHold(self: *GameState) void {
-        if (self.game_over or self.hold_used or self.current_piece.locked_a or self.current_piece.locked_b) return;
+        if (!self.canHold()) return;
 
         var stored = self.current_piece;
         stored.resetToSpawn();
@@ -651,52 +388,43 @@ pub const GameState = struct {
         self.refreshImpactFlags();
     }
 
-    /// Rotates both deterministic states clockwise in-place.
-    /// If either branch collides after rotation, both are reverted.
     pub fn tryRotateCW(self: *GameState) void {
+        self.tryRotate(.cw);
+    }
+
+    pub fn tryRotateCCW(self: *GameState) void {
+        self.tryRotate(.ccw);
+    }
+
+    /// Rotates both deterministic states in-place.
+    /// If either branch collides after every kick, both are reverted.
+    pub fn tryRotate(self: *GameState, dir: RotationDirection) void {
         if (self.game_over) return;
         const active_a = !self.current_piece.locked_a;
         const active_b = !self.current_piece.locked_b;
         if (!active_a and !active_b) return;
 
-        var applied = false;
         if (active_a and active_b) {
             const old_a = self.current_piece.state_a;
             const old_b = self.current_piece.state_b;
-            const old_rot = self.current_piece.state_a.rotation_idx;
 
-            self.current_piece.state_a.rotateCW();
-            self.current_piece.state_b.rotateCW();
+            rotatePiece(&self.current_piece.state_a, dir);
+            rotatePiece(&self.current_piece.state_b, dir);
 
-            const kicks_a = kickTableForShape(old_a.shape_type, old_rot);
-            const kicks_b = kickTableForShape(old_b.shape_type, old_rot);
-            const primary = if (old_a.shape_type == .I or old_b.shape_type == .I)
-                I_KICKS_CW[old_rot][0..]
-            else
-                kicks_a;
-            const secondary = if (old_a.shape_type == .I)
-                kicks_b
-            else if (old_b.shape_type == .I)
-                kicks_a
-            else
-                kicks_b;
+            // When one state is an I piece its kick table is tried first,
+            // then any kicks unique to the other state's table.
+            const kicks_a = kicks.forRotation(old_a.shape_type, old_a.rotation_idx, dir);
+            const kicks_b = kicks.forRotation(old_b.shape_type, old_b.rotation_idx, dir);
+            const b_first = old_b.shape_type == .I;
+            const primary = if (b_first) &kicks_b else &kicks_a;
+            const secondary = if (b_first) &kicks_a else &kicks_b;
 
-            for (primary) |kick| {
-                if (tryKick(self, old_a, old_b, kick)) {
-                    applied = true;
-                    break;
-                }
-            }
-
-            if (!applied) {
-                for (secondary) |kick| {
-                    if (kickInList(kick, primary)) continue;
-                    if (tryKick(self, old_a, old_b, kick)) {
-                        applied = true;
-                        break;
-                    }
-                }
-            }
+            const applied = for (primary.slice()) |kick| {
+                if (tryKick(self, old_a, old_b, kick)) break true;
+            } else for (secondary.slice()) |kick| {
+                if (primary.contains(kick)) continue;
+                if (tryKick(self, old_a, old_b, kick)) break true;
+            } else false;
 
             if (!applied) {
                 self.current_piece.state_a = old_a;
@@ -704,15 +432,28 @@ pub const GameState = struct {
                 return;
             }
         } else if (active_a) {
-            applied = rotateSingleCW(self, &self.current_piece.state_a);
-            if (!applied) return;
+            if (!rotateSingle(self, &self.current_piece.state_a, dir)) return;
         } else {
-            applied = rotateSingleCW(self, &self.current_piece.state_b);
-            if (!applied) return;
+            if (!rotateSingle(self, &self.current_piece.state_b, dir)) return;
         }
 
         self.refreshImpactFlags();
-        self.lock_delay_counter = 0;
+        if (self.lock_resets < MAX_LOCK_RESETS) {
+            self.lock_delay_counter = 0;
+            self.lock_resets += 1;
+        }
+    }
+
+    /// Advances the lock delay of a fully grounded piece.
+    /// Returns true once the delay expires and the piece collapses.
+    fn stepLockDelay(self: *GameState) bool {
+        if (self.lock_delay_counter >= LOCK_DELAY_TICKS) {
+            self.lock_delay_counter = 0;
+            self.finalizeCollapse();
+            return true;
+        }
+        self.lock_delay_counter += 1;
+        return false;
     }
 
     /// Applies one gravity tick with independent fall states.
@@ -740,60 +481,22 @@ pub const GameState = struct {
         }
 
         if (active_a and active_b) {
-            if (self.current_piece.grounded_a and self.current_piece.grounded_b) {
-                if (self.lock_delay_counter >= LOCK_DELAY_TICKS) {
-                    self.lock_delay_counter = 0;
-                    self.finalizeCollapse();
-                    return true;
-                }
-                self.lock_delay_counter += 1;
-                return false;
-            }
+            const grounded_a = self.current_piece.grounded_a;
+            const grounded_b = self.current_piece.grounded_b;
+            if (grounded_a and grounded_b) return self.stepLockDelay();
 
-            if (self.current_piece.grounded_a) {
-                self.partialLock(.a);
-                return false;
-            }
-
-            if (self.current_piece.grounded_b) {
-                self.partialLock(.b);
-                return false;
-            }
-
-            self.lock_delay_counter = 0;
+            // One state landed: lock it in place and let the other keep falling.
+            if (grounded_a) self.partialLock(.a);
+            if (grounded_b) self.partialLock(.b);
+            if (!grounded_a and !grounded_b) self.lock_delay_counter = 0;
             return false;
         }
 
-        if (active_a) {
-            if (self.current_piece.grounded_a) {
-                if (self.lock_delay_counter >= LOCK_DELAY_TICKS) {
-                    self.lock_delay_counter = 0;
-                    self.finalizeCollapse();
-                    return true;
-                }
-                self.lock_delay_counter += 1;
-                return false;
-            }
-
+        const grounded = if (active_a) self.current_piece.grounded_a else self.current_piece.grounded_b;
+        if (active_a or active_b) {
+            if (grounded) return self.stepLockDelay();
             self.lock_delay_counter = 0;
-            return false;
         }
-
-        if (active_b) {
-            if (self.current_piece.grounded_b) {
-                if (self.lock_delay_counter >= LOCK_DELAY_TICKS) {
-                    self.lock_delay_counter = 0;
-                    self.finalizeCollapse();
-                    return true;
-                }
-                self.lock_delay_counter += 1;
-                return false;
-            }
-
-            self.lock_delay_counter = 0;
-            return false;
-        }
-
         return false;
     }
 
@@ -832,6 +535,9 @@ pub const GameState = struct {
         return roll < self.current_piece.prob_a;
     }
 
+    /// Places the CURRENT piece as described by `move`, collapsing into state A
+    /// if `pick_a`. Does not perform the move's hold; callers that search over
+    /// hold apply it to the state first (see `applyMove`).
     pub fn applyMoveDeterministic(self: *GameState, move: *const Move, pick_a: bool, advance_rng: bool) void {
         if (self.game_over) return;
 
@@ -849,12 +555,8 @@ pub const GameState = struct {
             _ = self.rollCollapsePick();
         }
 
-        if (pick_a and !move.a_valid) {
-            self.game_over = true;
-            self.top_out_reason = .lock_out;
-            return;
-        }
-        if (!pick_a and !move.b_valid) {
+        const picked_valid = if (pick_a) move.a_valid else move.b_valid;
+        if (!picked_valid) {
             self.game_over = true;
             self.top_out_reason = .lock_out;
             return;
@@ -863,7 +565,12 @@ pub const GameState = struct {
         self.finalizeCollapseWithPick(pick_a);
     }
 
+    /// Plays a move chosen by the AI: holds if requested, then places and collapses.
     pub fn applyMove(self: *GameState, move: *const Move) void {
+        if (move.use_hold) {
+            std.debug.assert(self.canHold());
+            self.tryHold();
+        }
         const pick_a = self.rollCollapsePick();
         self.applyMoveDeterministic(move, pick_a, false);
     }
@@ -872,30 +579,15 @@ pub const GameState = struct {
         if (self.game_over) return;
         std.debug.assert(self.current_piece.grounded_a and self.current_piece.grounded_b);
 
-        // 1. ALWAYS project the winner to the board, ignoring legacy locked flags.
-        if (pick_a) {
-            if (projectPiece(self, self.current_piece.state_a, self.current_piece.wall_out_a)) {
-                self.game_over = true;
-                self.top_out_reason = .lock_out;
-                return;
-            }
-        } else {
-            if (projectPiece(self, self.current_piece.state_b, self.current_piece.wall_out_b)) {
-                self.game_over = true;
-                self.top_out_reason = .lock_out;
-                return;
-            }
+        const final_piece = if (pick_a) self.current_piece.state_a else self.current_piece.state_b;
+        const final_wall_out = if (pick_a) self.current_piece.wall_out_a else self.current_piece.wall_out_b;
+
+        // ALWAYS project the winner to the board, ignoring legacy locked flags.
+        if (projectPiece(self, final_piece, final_wall_out)) {
+            self.game_over = true;
+            self.top_out_reason = .lock_out;
+            return;
         }
-
-        const final_piece = if (pick_a)
-            self.current_piece.state_a
-        else
-            self.current_piece.state_b;
-
-        const final_wall_out = if (pick_a)
-            self.current_piece.wall_out_a
-        else
-            self.current_piece.wall_out_b;
 
         const cleared = self.board.clearFullLines();
         std.debug.assert(cleared <= 4);
@@ -905,6 +597,7 @@ pub const GameState = struct {
         self.score += line_scores[@intCast(cleared)] * (self.level + 1);
         self.level = self.lines_cleared / 10;
 
+        // An I piece that locked hanging over a wall costs a garbage line.
         if (final_piece.shape_type == .I and final_wall_out) {
             const hole_col: usize = Board.WIDTH / 2;
             if (self.board.addPenaltyLine(hole_col)) {
@@ -925,10 +618,82 @@ pub const GameState = struct {
         const pick_a = self.rollCollapsePick();
         self.finalizeCollapseWithPick(pick_a);
     }
-
-    /// Resolves the quantum superposition into a deterministic state via PRNG,
-    /// projects the result into the bitboard, and evaluates board clears.
-    pub fn collapseAndLock(self: *GameState) void {
-        self.finalizeCollapse();
-    }
 };
+
+test "same seed produces the same game" {
+    var a = GameState.init(1234);
+    var b = GameState.init(1234);
+    for (0..40) |_| {
+        try std.testing.expectEqual(a.current_piece.state_a.shape_type, b.current_piece.state_a.shape_type);
+        try std.testing.expectEqual(a.current_piece.prob_a, b.current_piece.prob_a);
+        a.hardDrop();
+        b.hardDrop();
+        try std.testing.expectEqualDeep(a.board, b.board);
+    }
+}
+
+test "quantum pieces always have two distinct shapes and increasing serials" {
+    var state = GameState.init(5);
+    var last_serial = state.current_piece.serial;
+    for (0..500) |_| {
+        if (state.game_over) {
+            state = GameState.init(state.pieces_generated);
+            last_serial = state.current_piece.serial;
+        }
+        try std.testing.expect(state.current_piece.state_a.shape_type != state.current_piece.state_b.shape_type);
+        try std.testing.expect(state.next_piece.serial == state.current_piece.serial + 1);
+        state.hardDrop();
+        if (!state.game_over) {
+            try std.testing.expect(state.current_piece.serial > last_serial);
+            last_serial = state.current_piece.serial;
+        }
+    }
+}
+
+test "hold swaps once per piece" {
+    var state = GameState.init(9);
+    const first = state.current_piece.serial;
+    try std.testing.expect(state.canHold());
+    state.tryHold();
+    try std.testing.expect(!state.canHold());
+    try std.testing.expectEqual(first, state.held_piece.?.serial);
+    try std.testing.expectEqual(first + 1, state.current_piece.serial);
+
+    state.hardDrop();
+    try std.testing.expect(state.canHold());
+    state.tryHold();
+    try std.testing.expectEqual(first, state.current_piece.serial);
+}
+
+test "rotation lock-delay resets are capped" {
+    var state = GameState.init(3);
+    // Land the piece without locking it.
+    while (!(state.current_piece.grounded_a and state.current_piece.grounded_b) and !state.current_piece.locked_a and !state.current_piece.locked_b) {
+        _ = state.tickGravity();
+    }
+    for (0..MAX_LOCK_RESETS + 5) |_| {
+        state.tryRotateCW();
+        state.tryRotateCCW();
+    }
+    try std.testing.expect(state.lock_resets <= MAX_LOCK_RESETS);
+}
+
+test "gravity speeds up with level" {
+    var state = GameState.init(1);
+    try std.testing.expectEqual(@as(i64, 1000), state.gravityIntervalMs());
+    state.level = 5;
+    try std.testing.expect(state.gravityIntervalMs() < 1000);
+    state.level = 100;
+    try std.testing.expectEqual(@as(i64, 100), state.gravityIntervalMs());
+}
+
+test "an I piece cannot be pushed off the board" {
+    var state = GameState.init(11);
+    // Force an I piece as state A and lock B so only A moves.
+    state.current_piece = QuantumPiece.init(.I, .O, 0.5, 0);
+    state.current_piece.locked_b = true;
+    state.current_piece.state_a.rotateCW();
+    for (0..40) |_| state.tryMoveHorizontal(1);
+    try std.testing.expect(!physics.checkCollisionIgnoreWalls(&state.board, &state.current_piece.state_a));
+    try std.testing.expect(state.current_piece.state_a.x <= 7);
+}

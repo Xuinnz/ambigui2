@@ -1,5 +1,11 @@
 .zig-cache
 zig-out
+# Prebuilt raylib for the web build (see README)
 libs
+# Old web build output; `zig build web` now writes to zig-out/web
 public
-data
+# Training output; only the shipped weights are tracked
+data/*
+!data/weights.json
+# Windows download metadata picked up through WSL
+*:Zone.Identifier
