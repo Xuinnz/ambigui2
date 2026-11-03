@@ -74,10 +74,16 @@ pub const Piece = struct {
     }
 
     pub fn rotateCW(self: *Piece) void {
-        const idx = shapeIndex(self.shape_type);
-        const next_idx: u2 = @intCast((@as(u3, self.rotation_idx) + 1) & 0b11);
-        self.rotation_idx = next_idx;
-        self.matrix = ROTATION_MASKS[idx][next_idx];
+        self.setRotation(self.rotation_idx +% 1);
+    }
+
+    pub fn rotateCCW(self: *Piece) void {
+        self.setRotation(self.rotation_idx -% 1);
+    }
+
+    fn setRotation(self: *Piece, rotation_idx: u2) void {
+        self.rotation_idx = rotation_idx;
+        self.matrix = ROTATION_MASKS[shapeIndex(self.shape_type)][rotation_idx];
     }
 };
 
@@ -95,11 +101,15 @@ pub const QuantumPiece = struct {
     locked_a: bool,
     locked_b: bool,
 
-    //probability of piece collapsing into shape_a upong landing
+    //probability of piece collapsing into shape_a upon landing
     prob_a: f32,
 
+    //position of this piece in the generated sequence. lets the AI tell
+    //pieces it is allowed to know about (current, next, hold) from hidden ones.
+    serial: u32,
+
     //initialize
-    pub fn init(shape_a: ShapeType, shape_b: ShapeType, probability_a: f32) QuantumPiece {
+    pub fn init(shape_a: ShapeType, shape_b: ShapeType, probability_a: f32, serial: u32) QuantumPiece {
         std.debug.assert(shape_a != shape_b); //2 shapes must not be the same
         std.debug.assert(std.math.isFinite(probability_a)); //must be a valid float
         std.debug.assert(probability_a >= 0.0 and probability_a <= 1.0);
@@ -114,6 +124,7 @@ pub const QuantumPiece = struct {
             .locked_a = false,
             .locked_b = false,
             .prob_a = probability_a,
+            .serial = serial,
         };
     }
 
@@ -146,3 +157,14 @@ pub const QuantumPiece = struct {
         self.state_b.y += dy;
     }
 };
+
+test "rotateCW and rotateCCW are inverses" {
+    var piece = Piece.init(.T);
+    piece.rotateCW();
+    try std.testing.expectEqual(@as(u2, 1), piece.rotation_idx);
+    piece.rotateCCW();
+    try std.testing.expectEqual(@as(u2, 0), piece.rotation_idx);
+    piece.rotateCCW();
+    try std.testing.expectEqual(@as(u2, 3), piece.rotation_idx);
+    try std.testing.expectEqual(ROTATION_MASKS[shapeIndex(.T)][3], piece.matrix);
+}

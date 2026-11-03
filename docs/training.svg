@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 380" width="780" height="380" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" role="img">
+<title>CMA-ES training fitness by generation</title>
+
+<style>
+  .surface { fill: #fcfcfb; }
+  .ink { fill: #0b0b0b; }
+  .ink-2 { fill: #52514e; }
+  .muted { fill: #898781; }
+  .grid { stroke: #e1e0d9; stroke-width: 1; }
+  .axis { stroke: #c3c2b7; stroke-width: 1; }
+  .s1 { fill: #2a78d6; }
+  .s1-line { stroke: #2a78d6; }
+  .s2-line { stroke: #eb6834; }
+  .before { fill: #898781; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .ink { fill: #f0efec; }
+    .ink-2 { fill: #c3c2b7; }
+    .grid { stroke: #2c2c2a; }
+    .axis { stroke: #383835; }
+    .s1 { fill: #3987e5; }
+    .s1-line { stroke: #3987e5; }
+    .s2-line { stroke: #d95926; }
+    .before { fill: #6e6d68; }
+  }
+</style>
+
+<rect class="surface" width="780" height="380" rx="8"/>
+<text class="ink" x="20.0" y="30.0" font-size="16" text-anchor="start" font-weight="bold">CMA-ES training: mean game score per generation</text>
+<text class="ink-2" x="20.0" y="50.0" font-size="12" text-anchor="start" font-weight="normal">60 generations, 24 samples each, 10 fresh games per generation</text>
+<line class="grid" x1="70" x2="630" y1="330.0" y2="330.0"/>
+<text class="muted" x="62.0" y="334.0" font-size="12" text-anchor="end" font-weight="normal">0k</text>
+<line class="grid" x1="70" x2="630" y1="287.7" y2="287.7"/>
+<text class="muted" x="62.0" y="291.7" font-size="12" text-anchor="end" font-weight="normal">25k</text>
+<line class="grid" x1="70" x2="630" y1="245.3" y2="245.3"/>
+<text class="muted" x="62.0" y="249.3" font-size="12" text-anchor="end" font-weight="normal">50k</text>
+<line class="grid" x1="70" x2="630" y1="203.0" y2="203.0"/>
+<text class="muted" x="62.0" y="207.0" font-size="12" text-anchor="end" font-weight="normal">75k</text>
+<line class="grid" x1="70" x2="630" y1="160.7" y2="160.7"/>
+<text class="muted" x="62.0" y="164.7" font-size="12" text-anchor="end" font-weight="normal">100k</text>
+<line class="grid" x1="70" x2="630" y1="118.3" y2="118.3"/>
+<text class="muted" x="62.0" y="122.3" font-size="12" text-anchor="end" font-weight="normal">125k</text>
+<line class="grid" x1="70" x2="630" y1="76.0" y2="76.0"/>
+<text class="muted" x="62.0" y="80.0" font-size="12" text-anchor="end" font-weight="normal">150k</text>
+<line class="axis" x1="70" x2="630" y1="330.0" y2="330.0"/>
+<text class="muted" x="70.0" y="348.0" font-size="12" text-anchor="middle" font-weight="normal">0</text>
+<text class="muted" x="164.9" y="348.0" font-size="12" text-anchor="middle" font-weight="normal">10</text>
+<text class="muted" x="259.8" y="348.0" font-size="12" text-anchor="middle" font-weight="normal">20</text>
+<text class="muted" x="354.7" y="348.0" font-size="12" text-anchor="middle" font-weight="normal">30</text>
+<text class="muted" x="449.7" y="348.0" font-size="12" text-anchor="middle" font-weight="normal">40</text>
+<text class="muted" x="544.6" y="348.0" font-size="12" text-anchor="middle" font-weight="normal">50</text>
+<text class="ink-2" x="350.0" y="368.0" font-size="12" text-anchor="middle" font-weight="normal">Generation</text>
+<polyline class="s1-line" points="70.0,234.5 79.5,268.4 89.0,237.4 98.5,231.7 108.0,157.0 117.5,227.1 126.9,242.1 136.4,239.7 145.9,269.6 155.4,212.4 164.9,236.8 174.4,239.9 183.9,253.3 193.4,236.4 202.9,246.3 212.4,248.5 221.9,257.6 231.4,185.9 240.8,213.8 250.3,250.7 259.8,237.8 269.3,248.0 278.8,208.7 288.3,226.6 297.8,239.0 307.3,262.1 316.8,211.0 326.3,95.1 335.8,258.3 345.3,187.3 354.7,160.7 364.2,211.6 373.7,230.2 383.2,217.8 392.7,210.0 402.2,249.0 411.7,225.6 421.2,228.0 430.7,243.6 440.2,251.8 449.7,247.6 459.2,191.8 468.6,195.8 478.1,222.9 487.6,260.6 497.1,236.2 506.6,255.3 516.1,240.8 525.6,240.4 535.1,222.6 544.6,244.8 554.1,239.7 563.6,244.9 573.1,213.4 582.5,169.3 592.0,217.7 601.5,195.5 611.0,195.4 620.5,206.0 630.0,225.2" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline class="s2-line" points="70.0,287.9 79.5,299.1 89.0,276.4 98.5,283.0 108.0,269.0 117.5,275.6 126.9,290.0 136.4,279.8 145.9,295.1 155.4,278.1 164.9,288.8 174.4,289.2 183.9,287.7 193.4,286.6 202.9,288.6 212.4,292.1 221.9,287.2 231.4,261.6 240.8,268.0 250.3,290.4 259.8,281.7 269.3,285.2 278.8,272.7 288.3,271.2 297.8,291.0 307.3,282.8 316.8,281.5 326.3,265.3 335.8,281.0 345.3,260.8 354.7,276.0 364.2,276.7 373.7,279.3 383.2,276.3 392.7,270.7 402.2,282.3 411.7,261.7 421.2,279.1 430.7,278.3 440.2,285.3 449.7,288.5 459.2,251.3 468.6,271.8 478.1,271.8 487.6,289.3 497.1,279.0 506.6,291.0 516.1,281.4 525.6,276.8 535.1,277.3 544.6,277.5 554.1,274.9 563.6,283.6 573.1,265.7 582.5,259.1 592.0,278.9 601.5,258.6 611.0,258.7 620.5,275.4 630.0,283.1" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<line class="s1-line" x1="640" x2="654" y1="225.2" y2="225.2" stroke-width="2"/>
+<text class="ink-2" x="660.0" y="229.2" font-size="12" text-anchor="start" font-weight="normal">Best sample</text>
+<line class="s2-line" x1="640" x2="654" y1="283.1" y2="283.1" stroke-width="2"/>
+<text class="ink-2" x="660.0" y="287.1" font-size="12" text-anchor="start" font-weight="normal">Generation mean</text>
+</svg>

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ambigui2</title>
+  <meta name="description" content="Dual-state tetromino game with an expectimax AI opponent, written in Zig.">
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; }
+    body { display: flex; align-items: center; justify-content: center; }
+    canvas.emscripten { border: 0; background: #000; max-width: 100vw; max-height: 100vh; }
+    #status { position: fixed; color: #888; font: 16px sans-serif; }
+  </style>
+</head>
+<body>
+  <div id="status">Loading…</div>
+  <canvas class="emscripten" id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+  <script>
+    var Module = {
+      canvas: document.getElementById('canvas'),
+      print: function (text) { console.log(text); },
+      printErr: function (text) { console.warn(text); },
+      onRuntimeInitialized: function () {
+        document.getElementById('status').remove();
+        Module.canvas.focus();
+        Module._game_init();
+        (function loop() {
+          Module._updateFrame();
+          requestAnimationFrame(loop);
+        })();
+      }
+    };
+    // Keep arrow keys and space from scrolling the page while playing.
+    window.addEventListener('keydown', function (e) {
+      if ([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].indexOf(e.key) >= 0) e.preventDefault();
+    });
+  </script>
+  <script src="game.js"></script>
+</body>
+</html>

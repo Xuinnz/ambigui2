@@ -1,206 +1,257 @@
 # ambigui2
 
-Dual-State Tetromino Engine and Artificial Intelligence Agent
+[![CI](https://github.com/Xuinnz/ambigui2/actions/workflows/ci.yml/badge.svg)](https://github.com/Xuinnz/ambigui2/actions/workflows/ci.yml)
 
-ambigui2 is a terminal-first Zig project focused on high-performance gameplay simulation and probabilistic decision-making. The design extends classic tetromino mechanics with dual-state pieces and targets an AI stack that combines expectimax search, beam pruning, transposition caching, and evolutionary optimization.
+Tetris in superposition, with an expectimax AI opponent that learns its own
+evaluation through self-play. Written from scratch in Zig, and runs on the
+desktop, in a terminal, and in the browser through WebAssembly.
 
-## Project Status
+<p align="center">
+  <img src="docs/ai-hard.gif" alt="The Hard AI playing: each falling piece shows two possible shapes, with outlined landing spots labelled by probability" width="420">
+  <br>
+  <sub>The Hard AI playing in the browser build, slowed to 4 moves per second for the recording.</sub>
+</p>
 
-Current repository state: Playable Engine Prototype
-- Core engine loop is playable in the terminal (raw input + ANSI render).
-- Dual-state pieces, LUT rotations, and SRS CW wall kicks are implemented.
-- Bitboard board, collision/physics, and line clears are implemented.
-- 7-bag piece generation with next-piece staging is implemented.
-- Scoring uses non-linear line rewards with level progression.
-This README documents the intended production architecture and development workflow.
+Every piece is two tetrominoes at once. Both shapes fall side by side, each
+with a probability. When the piece lands it collapses into one of them. The
+player, or the AI, has to choose where the piece goes **before** knowing what
+it becomes.
 
-## Core Concepts
+## Highlights
 
-### Dual-State Mechanics
+- **An AI built for uncertainty.** Expectimax search alternates between the
+  AI's choices and the piece's collapse. Each placement is valued by what
+  happens in both possible outcomes, weighted by their probability.
+- **2.4× stronger, 2.7× faster.** The reworked Hard AI clears 105 lines per
+  game on average against 43.5 before, at 8.2 ms per move against 21.7.
+  Measured on the same 40 games, capped at 1000 pieces. It also stopped
+  reading a piece the player can't see.
+- **Weights learned by self-play.** A genetic algorithm and a from-scratch
+  CMA-ES (including its eigen-decomposition) train the evaluation function on
+  all CPU cores, with held-out validation to avoid picking lucky runs.
+- **Fast engine.** The board is a bitboard (one `u16` per row). A collision
+  check takes 3.8 ns, a line clear 16 ns, and computing all six board features
+  51 ns. The search visits about 2 million positions per second on one core.
+- **One codebase, three platforms.** Desktop (raylib), terminal, and browser.
+  The browser has no threads, so the AI runs as a resumable search that thinks
+  for about 6 ms per frame and keeps the game at 60 fps. The whole web build is
+  about 0.5 MB.
+- **Tested and verified.** 43 unit tests and CI on every push. Performance
+  refactors were checked against recorded moves from the old code: identical
+  moves on every seed before any behaviour change was made.
 
-Each spawned piece is represented as a probabilistic dual-state candidate and collapses into a concrete shape under placement or rule-triggered conditions.
+## Results
 
-### Bitboard-Centric Engine
+### Before and after
 
-Board and piece operations are designed around compact integer bitboards to enable fast collision checks, state transforms, and line processing.
+The original Hard mode searched 3 pieces deep without hold, and its third piece
+was read from the hidden random number generator. The new Hard mode searches 3
+pieces with hold, and only uses pieces a human player can also see.
 
-### Probabilistic Decision Agent
+![Hard mode AI: lines cleared 43.5 vs 105.4, score 15.5k vs 96.4k, milliseconds per move 21.7 vs 8.15](docs/benchmark-hard.svg)
 
-The AI is designed for uncertainty-aware planning through expectimax and chance-node evaluation, with strict runtime budgeting for real-time play.
+### What makes it stronger
 
-## Features
+Looking ahead helps, but searching the hold slot is what really pays off. With
+hold, the AI chooses between two different superpositions every turn, and can
+often find a spot where both outcomes are safe.
 
-### Engine
+![Lines cleared per game by search setting: greedy 21.2, 2 pieces 30.8, 1 piece + hold 28.9, 2 pieces + hold 62.6, Hard 105.4](docs/benchmark-search.svg)
 
-- Dual-state tetromino lifecycle (spawn, transform, collapse, lock)
-- Deterministic board updates and line clear resolution
-- Terminal renderer and low-latency input loop
-- Reproducible simulation mode for AI training
+| Search | Mean lines | Mean score | ms / move |
+|---|---:|---:|---:|
+| Original greedy (old depth 1) | 21.2 | 4,150 | 0.07 |
+| Original 2 pieces (old depth 3) | 30.9 | 8,175 | 1.21 |
+| Original Hard (old depth 5) | 43.5 | 15,485 | 21.73 |
+| Greedy, 1 piece | 21.2 | 4,158 | 0.03 |
+| 2 pieces | 30.8 | 8,148 | 0.64 |
+| 1 piece + hold | 28.9 | 7,150 | 0.07 |
+| 2 pieces + hold | 62.6 | 35,803 | 1.11 |
+| **Hard: 3 pieces + hold** | **105.4** | **96,375** | **8.15** |
 
-### AI
+<sub>40 games per row (seeds 1000–1039), capped at 1000 pieces, same trained weights.
+Reproduce with `zig build bench -- --games 40 --moves 1000`. Raw data:
+[docs/benchmark.csv](docs/benchmark.csv).</sub>
 
-- Expectimax search over deterministic and stochastic branches
-- Beam search pruning to bound combinatorial growth
-- Zobrist hashing and transposition table reuse
-- Heuristic evaluation over board quality metrics
-- Offline genetic training for heuristic weight evolution
+### Training the evaluation function
 
-### RNG
+The AI scores boards with six weighted features: height, holes, bumpiness,
+wells, and row and column transitions. The weights are learned by playing
+thousands of games against itself.
 
-- Xoshiro256** class generator for high-throughput simulation
-- Controlled seeding for repeatable experiments
+![CMA-ES training: best sample and generation mean score over 60 generations](docs/training.svg)
 
-## Architecture
+A 60-generation CMA-ES run took about 7 minutes on 12 threads. The plot shows
+why validation matters. Generation 27's best sample scored 139k on its 10
+training games, but no finalist reached 51k on 40 held-out games. The original
+trainer kept the best score it had ever seen, which mostly rewards luck. The new
+trainer picks its final weights on games it never trained on.
 
-ambigui2 is organized into two decoupled pipelines.
+Against the shipped weights, the CMA-ES weights did better in Hard (114.8 vs
+105.4 mean lines) and tied in the setting they were trained in, so the shipped
+weights are unchanged for now. The full write-up is in [docs/ai.md](docs/ai.md).
 
-### 1) Offline Training Pipeline
+## How the AI works
 
-Headless simulation environment for large-volume self-play.
+```text
+max node      the AI picks a placement (or swaps with hold first)
+  └─ chance   the piece collapses: shape A with probability p, B with 1 - p
+       ├─ A ─ max node for the next piece ...
+       └─ B ─ max node for the next piece ...
 
-- Population initialization
-- Tournament selection and elitism
-- Crossover and mutation
-- Fitness evaluation over multi-game batches
-- Best-weight snapshot export for runtime use
+value(chance) = p * value(A) + (1 - p) * value(B)
+```
 
-### 2) Online Execution Engine
+- **Beam pruning.** Every placement gets a cheap one-move estimate, and only the
+  best few are searched deeper. Their simulated outcomes are kept, not recomputed.
+- **Transposition table.** Different placements often lead to the same position.
+  Their values are cached under a hash of the board, pieces, hold slot and RNG.
+- **Knowledge horizon.** Every piece carries a serial number. The search refuses
+  to place anything past the next-piece preview, so it can't use information a
+  player doesn't have.
+- **Resumable root.** `Search.step` evaluates a few candidates at a time. This
+  lets the single-threaded browser build spread one search over several frames.
+- **Training.** Every candidate in a generation plays the same seeds, so
+  differences come from the weights, not from luckier piece sequences. Fitness
+  is mean score, and the winner is chosen on held-out games.
 
-Real-time gameplay loop for terminal play.
+## Rules
 
-- Current board state ingestion
-- Time-bounded expectimax inference
-- Transposition-aware evaluation
-- Move emission to engine loop
+- Each piece is a pair of different shapes, A and B, with a collapse
+  probability between 10% and 90%. Shapes come from a 7-bag, so every shape
+  appears equally often.
+- The two shapes move and rotate together but fall independently. If one lands
+  first, it waits while the other keeps falling.
+- When both have landed, the piece collapses: A with its probability, otherwise
+  B. Only the chosen shape is written to the board.
+- An I piece may hang over a wall. If it collapses there, the overhanging cells
+  are lost and you get a garbage line.
+- Standard scoring (100 / 300 / 500 / 800 × level). The level goes up every 10
+  lines, and gravity speeds up with it.
 
-## Prerequisites
+![Player vs AI: both boards, with hold and next boxes, A/B probability boxes, and probability-labelled landing ghosts](docs/screenshot-vs-ai.png)
 
-- Linux or WSL2
-- Zig 0.15.2
+## Play
 
-Additional libraries required for the raylib renderer on Linux:
+You need [Zig 0.15.2](https://ziglang.org/download/). On Linux, the desktop
+build also needs:
 
 ```bash
 sudo apt install libwayland-dev wayland-protocols libxkbcommon-dev libegl1-mesa-dev
 ```
 
-Version pinning matters for compiler behavior and reproducible builds.
-
-## Getting Started
-
-### 1) Clone
-
-```bash
-git clone https://github.com/yourusername/ambigui2.git
-cd ambigui2
-```
-
-### 2) Verify Zig Version
-
-```bash
-zig version
-```
-
-Expected output:
-
-```text
-0.15.2
-```
-
-### 3) Build (After Implementation Milestone)
-
-```bash
-zig build
-```
-
-### 4) Run (build targets provided by `build.zig`)
-
-This project exposes several build steps via `zig build` defined in [build.zig](build.zig):
-
-- `run` — GUI renderer executable (raylib):
+Desktop (solo, or player vs AI on Easy, Medium or Hard):
 
 ```bash
 zig build run
 ```
 
-- `train` — headless genetic trainer:
-
-```bash
-zig build train
-```
-
-- `demo` — terminal-mode demo (same codepath as `src/main.zig`):
+Terminal version (press `P` to let the AI play):
 
 ```bash
 zig build demo
 ```
 
-- `test` — run unit tests:
+| Key | Action |
+|---|---|
+| ← → | Move (hold to auto-repeat) |
+| ↓ | Soft drop |
+| Space | Hard drop |
+| ↑ or X | Rotate clockwise |
+| Z or Left Ctrl | Rotate counter-clockwise |
+| C or Left Shift | Hold |
+| R | Back to menu after game over |
+
+| Difficulty | Opponent |
+|---|---|
+| Easy | No board evaluation; only goes for immediate line clears. One move per second. |
+| Medium | Trained weights, 1-piece search, a move every 0.5 s. |
+| Hard | Trained weights, 3-piece search with hold, as fast as it can think. |
+
+### Browser build
+
+It needs [emsdk](https://emscripten.org/docs/getting_started/downloads.html)
+and raylib compiled for the web in `libs/wasm/` (`libraylib.a` plus
+`include/raylib.h`). Build raylib from its `src/` directory with
+`make PLATFORM=PLATFORM_WEB` inside an emsdk shell, and copy the resulting
+`libraylib.web.a` to `libs/wasm/libraylib.a`. Then:
 
 ```bash
-zig build test
+zig build web -Demcc=$HOME/emsdk/upstream/emscripten/emcc
 ```
-
-- `bench` — benchmark AI across seeds:
 
 ```bash
-zig build bench
+python3 -m http.server -d zig-out/web 8000
 ```
 
-You can pass configurable AI options from the command line (see `build.zig`) using `-D` flags. Example:
+Then open <http://localhost:8000>.
+
+### Training and benchmarking
 
 ```bash
-zig build run -Dseed=12345 -Dai_depth=3 -Dai_beam_width=5
+zig build train
 ```
-
-If you prefer to run the terminal harness directly without the build step, the entrypoint is `src/main.zig`:
 
 ```bash
-zig run src/main.zig
+zig build train -- --cmaes
 ```
-
-## Development Workflow
-
-### Suggested Local Loop
 
 ```bash
-zig fmt src/**/*.zig tests/**/*.zig
-zig test src/main.zig
-zig build
+zig build bench -- --weights path/to/weights.json --games 40 --moves 1000
 ```
 
-Adjust test commands as module-level test targets are introduced.
+The first command runs the genetic algorithm, and `--cmaes` uses CMA-ES instead.
+Training writes `data/weights.json` (choose another path with `--out`) and a
+per-generation log, `data/training_history.csv`. The weights are embedded into
+every binary at build time. `zig build train -- --smoke` runs a quick check that
+the pipeline works.
 
-### Engineering Priorities
+The charts in `docs/` are generated from CSV files with stdlib-only Python:
 
-- Correctness-first collision and lock semantics
-- Deterministic behavior under fixed seeds
-- Predictable frame-time budget in online mode
-- Measurable search quality improvements from training
+```bash
+python3 tools/plot_history.py data/training_history.csv docs/training.svg
+```
 
-## Testing Strategy
+```bash
+python3 tools/plot_benchmark.py docs/benchmark.csv docs
+```
 
-Planned testing layers:
+## Build steps
 
-- Unit tests: board transforms, collision checks, line clear logic
-- Property tests: piece invariants and rotation legality
-- Determinism tests: seed-to-sequence reproducibility
-- AI regression tests: fixed-state move quality and latency caps
+| Step | What it does |
+|---|---|
+| `zig build run` | Desktop game |
+| `zig build demo` | Terminal game |
+| `zig build web` | Browser build into `zig-out/web` |
+| `zig build train` | Weight trainer (`-- --cmaes`, `-- --smoke`, `-- --out FILE`) |
+| `zig build bench` | AI strength and speed across search settings |
+| `zig build metrics` | Engine micro-benchmarks |
+| `zig build test` | Unit tests |
 
-## Contributing
+Options: `-Dseed=N` fixes the piece sequence (the default `0` picks a new one
+every game). `-Ddepth=N` (pieces, max 3) and `-Dbeam=N` set the terminal AI's
+search.
 
-Contributions are welcome. For substantial changes, open an issue first to align on scope, performance targets, and testing expectations.
+## Layout
 
-When submitting a pull request:
-
-- Keep changes modular and documented
-- Include or update tests where applicable
-- Preserve deterministic behavior under fixed seeds
+```text
+src/
+  engine/   bitboard, pieces, collision, SRS kicks, 7-bag, board features, game rules
+  ai/       expectimax search, background worker, GA and CMA-ES trainers
+  ui/       raylib renderer, app state machine and keyboard handling (desktop + web)
+  renderer_main.zig   desktop entry point
+  web_main.zig        browser entry point
+  main.zig            terminal entry point
+web/        HTML page for the browser build
+tools/      chart scripts
+docs/       AI write-up, benchmark and training data, charts, screenshots
+```
 
 ## License
 
-This repository includes a `LICENSE` file at the project root. The project is released under the MIT License.
+MIT, see [LICENSE](LICENSE).
 
-## Academic Context
+## Academic context
 
-This project was initiated for Intro to Modern AI coursework and is maintained as a systems-and-AI engineering project.
+This project was started for an Intro to Modern AI course and is maintained as
+a systems and AI engineering project.

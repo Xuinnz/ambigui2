@@ -5,12 +5,12 @@ const GameState = game_mod.GameState;
 const expectimax = @import("ai/expectimax.zig");
 const heuristics = @import("ai/heuristics.zig");
 const Board = @import("engine/board.zig").Board;
+const physics = @import("engine/physics.zig");
 const piece_mod = @import("engine/piece.zig");
 const Piece = piece_mod.Piece;
 const config = @import("config");
 
-//depth = 5, width = 8 for presentation
-//depth 3, width = 5 for training
+//depth = pieces placed per line of play (max 3)
 const SEED: u64 = config.seed;
 const AI_DEPTH: u32 = config.ai_depth;
 const AI_BEAM_WIDTH: usize = config.ai_beam_width;
@@ -44,25 +44,13 @@ fn disableRawMode(orig_termios: posix.termios) void {
 fn overlayPiece(render_grid: *[Board.HEIGHT]u16, piece: *const Piece) void {
     var row: usize = 0;
     while (row < Piece.BOUND_SIZE) : (row += 1) {
-        const shift_amount: u4 = @intCast((Piece.BOUND_SIZE - 1 - row) * 4);
-        const piece_row: u16 = (piece.matrix >> shift_amount) & 0x0F;
+        const piece_row = physics.pieceRow(piece, row);
         if (piece_row == 0) continue;
 
         const board_y: i16 = @as(i16, piece.y) + @as(i16, @intCast(row));
         if (board_y < 0 or board_y >= @as(i16, @intCast(Board.HEIGHT))) continue;
 
-        var projected_row: u16 = 0;
-        const x_i16: i16 = @as(i16, piece.x);
-        if (x_i16 < 0) {
-            const shift_right_i16: i16 = -x_i16;
-            std.debug.assert(shift_right_i16 <= 15);
-            projected_row = piece_row >> @as(u4, @intCast(shift_right_i16));
-        } else {
-            std.debug.assert(x_i16 <= 15);
-            projected_row = piece_row << @as(u4, @intCast(x_i16));
-        }
-
-        render_grid[@as(usize, @intCast(board_y))] |= projected_row;
+        render_grid[@as(usize, @intCast(board_y))] |= physics.projectRow(piece_row, piece.x).on_board;
     }
 }
 
@@ -199,12 +187,12 @@ fn render(state: *const GameState) !void {
         try writer.print("|\n", .{});
     }
     try writer.print("=======================\n", .{});
-    try writer.print("Controls: [<-] Left | [->] Right | [^] Rotate | [v] Faster Drop | [Space] Hard Drop | [C] Hold | [P] Toggle AI | [N] AI Step | [q/Q] Quit\n", .{});
+    try writer.print("Controls: [<-] Left | [->] Right | [^] Rotate | [z] Rotate Back | [v] Faster Drop | [Space] Hard Drop | [C] Hold | [P] Toggle AI | [N] AI Step | [q/Q] Quit\n", .{});
     try writer.flush();
 }
 
-fn runAiMove(state: *GameState) void {
-    const move = expectimax.bestMoveWithOptions(state, &heuristics.TRAINED_WEIGHTS, .{
+fn runAiMove(state: *GameState, weights: *const game_mod.Weights) void {
+    const move = expectimax.bestMoveWithOptions(state, weights, .{
         .depth = AI_DEPTH,
         .beam_width = AI_BEAM_WIDTH,
     });
@@ -220,6 +208,10 @@ fn handleGameplayKey(state: *GameState, key: u8) bool {
     if (key == 'q' or key == 'Q') return true;
     if (key == 'c' or key == 'C') {
         state.tryHold();
+        return false;
+    }
+    if (key == 'z' or key == 'Z') {
+        state.tryRotateCCW();
         return false;
     }
     if (key == 's' or key == 'S') {
@@ -248,14 +240,13 @@ pub fn main() !void {
     try enableRawMode(&orig_termios);
     defer disableRawMode(orig_termios); // Ensure terminal resets even if game crashes
 
-    // Initialize deterministic game state
-    var state = GameState.init(SEED);
+    // Initialize game state; -Dseed=0 (the default) picks a new seed each run
+    var state = GameState.init(if (SEED != 0) SEED else std.crypto.random.int(u64));
 
-    // Load trained weights from data/weights.json (optional)
-    try heuristics.loadTrainedWeights();
+    // Trained weights from data/weights.json, embedded at build time
+    const weights = heuristics.trainedWeights();
 
     var last_gravity_tick = std.time.milliTimestamp();
-    const gravity_interval_ms: i64 = 500; // Piece falls every half second
 
     var ai_autopilot_active = false;
     var ai_step_requested = false;
@@ -315,14 +306,14 @@ pub fn main() !void {
                     last_ai_tick = current_time;
                 }
                 ai_step_requested = false;
-                runAiMove(&state);
+                runAiMove(&state, &weights);
                 ai_moved = true;
             }
         }
 
         // 3. GRAVITY TICKS
         if (!ai_autopilot_active and !ai_moved) {
-            if (current_time - last_gravity_tick > gravity_interval_ms) {
+            if (current_time - last_gravity_tick > state.gravityIntervalMs()) {
                 last_gravity_tick = current_time;
                 _ = state.tickGravity();
             }
